@@ -1,8 +1,8 @@
 """
 Writer Agent
 ~~~~~~~~~~~~
-编剧 Agent - 负责生成每周详细剧情
-使用 GPT-4 根据游戏设计和角色状态创作对话和事件
+Writer Agent - generates detailed story content.
+Uses the configured LLM to create dialogue and events based on the game design and character state.
 """
 
 import logging
@@ -18,20 +18,20 @@ logger = logging.getLogger(__name__)
 
 
 class WriterAgent:
-    """编剧 Agent - 剧情生成器"""
+    """Writer Agent - Story generator"""
     
     def __init__(self, api_key: Optional[str] = None, base_url: Optional[str] = None):
         """
-        初始化编剧 Agent
+        Initialize the Writer Agent.
         
         Args:
-            api_key: API Key
-            base_url: API Base URL
+            api_key: API key
+            base_url: API base URL
         """
         self.llm_client = LLMClient(api_key=api_key, base_url=base_url)
         self.config = WriterConfig
         
-        logger.info("✅ 编剧 Agent 初始化成功")
+        logger.info("Writer Agent initialized successfully")
     
     def split_node_into_plots(
         self,
@@ -41,21 +41,21 @@ class WriterAgent:
         available_characters: List[Dict[str, Any]] = [],
         segment_count: int = 3
     ) -> List[Dict[str, Any]]:
-        """将节点概要切分为剧情片段"""
-        logger.info(f"✂️  正在切分剧情片段 (目标片段数: {segment_count})...")
+        """Split the node summary into plot segments"""
+        logger.info(f"Splitting plot segments (target segments: {segment_count})...")
         
         # 根据 segment_count 生成不同的指令
         if segment_count == 1:
-            split_instruction = "保持为一个完整的场景，不要切分。"
+            split_instruction = "Keep as a single complete scene. Do not split."
         else:
-            split_instruction = f"每个片段应该是一个小的场景或事件，具有明确的冲突或行动。"
+            split_instruction = "Each segment should be a small scene or event with a clear conflict or action."
         
-        scenes_str = ", ".join(available_scenes) if available_scenes else "未指定，请根据剧情自由选择"
-        # 构建角色的详细信息
+        scenes_str = ", ".join(available_scenes) if available_scenes else "unspecified; choose based on plot needs"
+        # Build character details
         characters_info = "\n".join([
-            f"- {char.get('name', 'Unknown')}（{char.get('gender', '')},{char.get('personality', '')}）：{char.get('appearance', '')}。背景：{char.get('background', '')[:80]}..."
+            f"- {char.get('name', 'Unknown')} ({char.get('gender', '')},{char.get('personality', '')}): {char.get('appearance', '')}. Background: {char.get('background', '')[:80]}..."
             for char in available_characters
-        ]) if available_characters else "未指定角色"
+        ]) if available_characters else "no characters specified"
 
         prompt = self.config.PLOT_SPLIT_PROMPT.format(
             segment_count=segment_count,
@@ -66,8 +66,8 @@ class WriterAgent:
             available_characters=characters_info
         )
         try:
-            # 使用专门的 System Prompt 以确保 JSON 格式
-            system_prompt = "你是一个剧情结构分析助手。你的任务是将剧情概要切分为结构化的片段，并严格输出 JSON 格式。"
+            # Use a dedicated system prompt to ensure JSON format
+            system_prompt = "You are a plot structure assistant. Split the plot summary into structured segments and output strictly in JSON."
             
             response = self.llm_client.chat_completion(
                 messages=[
@@ -78,7 +78,7 @@ class WriterAgent:
             )
             return JSONParser.parse_ai_response(response)
         except Exception as e:
-            logger.error(f"❌ 切分剧情失败: {e}")
+            logger.error(f"Split plot failed: {e}")
             return []
 
     def synthesize_script(
@@ -89,18 +89,18 @@ class WriterAgent:
         available_scenes: List[str] = [],
         available_characters: List[Dict[str, Any]] = []
     ) -> str:
-        """将演员表演整合成剧本"""
-        logger.info("🧩 正在整合剧本 (基于结构化数据)...")
+        """Synthesize actor performances into a script"""
+        logger.info("Synthesizing script (from structured data)...")
         
         # 将结构化数据转换为 JSON 字符串供 LLM 阅读
         performances_json = json.dumps(plot_performances, ensure_ascii=False, indent=2)
         choices_json = json.dumps(choices, ensure_ascii=False, indent=2)
-        scenes_str = ", ".join(available_scenes) if available_scenes else "未指定"
-        # 构建角色的详细信息
+        scenes_str = ", ".join(available_scenes) if available_scenes else "unspecified"
+        # Build character details
         characters_info = "\n".join([
-            f"- {char.get('name', 'Unknown')}（{char.get('gender', '')},{char.get('personality', '')}）：{char.get('appearance', '')}。背景：{char.get('background', '')[:80]}..."
+            f"- {char.get('name', 'Unknown')} ({char.get('gender', '')},{char.get('personality', '')}): {char.get('appearance', '')}. Background: {char.get('background', '')[:80]}..."
             for char in available_characters
-        ]) if available_characters else "未指定"
+        ]) if available_characters else "unspecified"
         
         prompt = self.config.PLOT_SYNTHESIS_PROMPT.format(
             plot_performances=performances_json,
@@ -118,7 +118,7 @@ class WriterAgent:
                 temperature=0.7
             )
         except Exception as e:
-            logger.error(f"❌ 整合剧本失败: {e}")
+            logger.error(f"Synthesize script failed: {e}")
             return str(plot_performances)
 
     def decide_next_speaker(
@@ -128,14 +128,14 @@ class WriterAgent:
         story_context: str
     ) -> tuple[str, str]:
         """
-        决定下一位发言的角色及剧情指导
+        Decide the next speaker and brief guidance.
         
         Returns:
-            (角色名, 剧情指导) 或 ("STOP", "")
+            (character_name, guidance) or ("STOP", "")
         """
-        # 构建角色的详细信息
+        # Build character details
         characters_info = "\n".join([
-            f"- {char.get('name', 'Unknown')}（{char.get('gender', '')},{char.get('personality', '')}）：{char.get('appearance', '')}。背景：{char.get('background', '')[:80]}..."
+            f"- {char.get('name', 'Unknown')} ({char.get('gender', '')},{char.get('personality', '')}): {char.get('appearance', '')}. Background: {char.get('background', '')[:80]}..."
             for char in characters
         ])
         
@@ -147,84 +147,84 @@ class WriterAgent:
         try:
             response = self.llm_client.chat_completion(
                 messages=[
-                    {"role": "system", "content": "你是一个辅助剧情生成的导演助手。"},
+                    {"role": "system", "content": "You are a directing assistant that helps coordinate plot generation."},
                     {"role": "user", "content": prompt}
                 ],
-                temperature=0.3 # 低温度以获得更确定的结果
+                temperature=0.3 # low temperature for more deterministic results
             )
             response = response.strip()
             
-            # 解析响应
+            # Parse response
             import re
             
-            # 提取 <character> 标签
+            # Extract <character> tag
             char_match = re.search(r'<character>(.+?)</character>', response, re.DOTALL)
             if not char_match:
-                logger.warning("⚠️ 导演返回格式错误，未找到 <character> 标签")
+                logger.warning("Director response format error: missing <character> tag")
                 return "STOP", ""
             
             speaker = char_match.group(1).strip()
             
-            # 检查是否是 STOP
+            # Check STOP
             if speaker.upper() == "STOP":
                 return "STOP", ""
             
-            # 提取 <advice> 标签
+            # Extract <advice> tag
             advice_match = re.search(r'<advice>(.+?)</advice>', response, re.DOTALL)
             guidance = advice_match.group(1).strip() if advice_match else ""
             
-            logger.debug(f"🎬 解析结果: 角色={speaker}, 指导={guidance}")
+            logger.debug(f"Parsed result: character={speaker}, guidance={guidance}")
             return speaker, guidance
             
         except Exception as e:
-            logger.error(f"❌ 决定下一位发言者失败: {e}")
+            logger.error(f"Decide next speaker failed: {e}")
             return "STOP", ""
     
     def append_story(self, story_text: str) -> None:
         """
-        将新剧情追加到story.txt
+        Append new story content to story.txt
         
         Args:
-            story_text: 要追加的剧情文本
+            story_text: story text to append
         """
         if not FileHelper.safe_append_text(PathConfig.STORY_FILE, story_text):
-            raise Exception("追加剧情失败")
+            raise Exception("Failed to append story")
     
     @staticmethod
     def load_story() -> str:
         """
-        加载完整的story.txt
+        Load full story.txt
         
         Returns:
-            剧情文本，文件不存在返回空字符串
+            Story text; returns empty string if file does not exist
         """
         try:
             with open(PathConfig.STORY_FILE, 'r', encoding='utf-8') as f:
                 story = f.read()
             
-            logger.info(f"📖 剧情文件已加载: {len(story)} 字符")
+            logger.info(f"Story file loaded: {len(story)} characters")
             return story
             
         except FileNotFoundError:
-            logger.warning(f"⚠️  剧情文件不存在，将创建新文件")
+            logger.warning("Story file not found; a new file will be created on first write")
             return ""
         except Exception as e:
-            logger.error(f"❌ 加载剧情文件失败: {e}")
+            logger.error(f"Load story file failed: {e}")
             return ""
     
 
     
     def parse_story_for_ui(self, story_text: str) -> List[Dict[str, Any]]:
         """
-        解析剧情文本为UI可用的数据结构
+        Parse story text into a UI-friendly structure
         
         Args:
-            story_text: 原始剧情文本
+            story_text: raw story text
             
         Returns:
-            剧情片段列表，每个片段包含对话、图像、选项等信息
+            List of story segments; each contains dialogue, images, choices, etc.
         """
-        logger.info("📝 解析剧情文本...")
+        logger.info("Parsing story text...")
         
         segments = []
         current_location = None
@@ -238,7 +238,7 @@ class WriterAgent:
             if not line:
                 continue
             
-            # 解析场景标题 (## 地点 或 ## 地点 - 时间)
+            # Parse scene title (## Location or ## Location - Time)
             scene_match = re.match(r'##\s*(.+)', line)
             
             if scene_match:
@@ -249,9 +249,9 @@ class WriterAgent:
                     new_time = parts[1].strip()
                 else:
                     new_location = content
-                    new_time = "Day" # 默认时间
+                    new_time = "Day" # default time
                 
-                # 如果场景变化，添加场景切换标记
+                # If scene changes, add scene switch marker
                 if new_location != current_location:
                     segments.append({
                         "type": "scene",
@@ -263,7 +263,7 @@ class WriterAgent:
                 current_location = new_location
                 continue
             
-            # 解析图像标注 <image id="角色">表情</image>
+            # Parse image tag <image id="Character">expression</image>
             image_match = re.match(r'<image\s+id="([^"]+)">([^<]+)</image>', line)
             if image_match:
                 character = image_match.group(1).strip()
@@ -278,7 +278,7 @@ class WriterAgent:
                 })
                 continue
             
-            # 解析对话 (角色名: "对话内容")
+            # Parse dialogue (Character: "text")
             dialogue_match = re.match(r'([^:]+):\s*"?(.+?)"?$', line)
             if dialogue_match:
                 speaker = dialogue_match.group(1).strip()
@@ -292,7 +292,7 @@ class WriterAgent:
                 })
                 continue
             
-            # 解析选项 ([CHOICE])
+            # Parse choice start ([CHOICE])
             if line == '[CHOICE]':
                 segments.append({
                     "type": "choice_start",
@@ -301,14 +301,14 @@ class WriterAgent:
                 })
                 continue
             
-            # 解析选项内容 (选项1: "文字" → [效果])
+            # Parse choice option (Option1: "text" → [effects])
             choice_match = re.match(r'选项(\d+):\s*"(.+?)"\s*→\s*\[(.+?)\]', line)
             if choice_match:
                 choice_num = int(choice_match.group(1))
                 choice_text = choice_match.group(2).strip()
                 effects_str = choice_match.group(3).strip()
                 
-                # 解析效果
+                # Parse effects
                 effects = self._parse_choice_effects(effects_str)
                 
                 segments.append({
@@ -319,27 +319,27 @@ class WriterAgent:
                 })
                 continue
         
-        logger.info(f"✅ 解析完成: {len(segments)} 个片段")
+        logger.info(f"Parsing complete: {len(segments)} segments")
         return segments
     
     def summarize_story(self, story_content: str) -> str:
         """
-        生成剧情摘要
+        Generate story summary
         
         Args:
-            story_content: 剧情内容
+            story_content: story content
             
         Returns:
-            剧情摘要
+            Story summary
         """
-        logger.info("📝 生成剧情摘要...")
+        logger.info("Generating story summary...")
         
         try:
             prompt = self.config.SUMMARY_PROMPT.format(story_content=story_content)
             
             summary = self.llm_client.chat_completion(
                 messages=[
-                    {"role": "system", "content": "你是一位擅长总结故事的助手。"},
+                    {"role": "system", "content": "You are an assistant skilled at summarizing stories."},
                     {"role": "user", "content": prompt}
                 ],
                 temperature=0.5
@@ -348,5 +348,5 @@ class WriterAgent:
             return summary.strip()
             
         except Exception as e:
-            logger.error(f"❌ 摘要生成失败: {str(e)}")
-            return story_content[-500:]  # 失败时回退到截取最后一段
+            logger.error(f"Generate summary failed: {str(e)}")
+            return story_content[-500:]  # fallback to last section on failure

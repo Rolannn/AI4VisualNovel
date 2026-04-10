@@ -1,7 +1,7 @@
 """
 Workflow Controller
 ~~~~~~~~~~~~~~~~~~~
-协调各个 Agent 的执行流程，管理整个游戏生成和运行的生命周期
+Coordinates agent execution and manages the full lifecycle of game generation and runtime.
 """
 
 import logging
@@ -19,32 +19,41 @@ from agents.designer_agent import DesignerAgent
 from agents.artist_agent import ArtistAgent
 from agents.writer_agent import WriterAgent
 from agents.actor_agent import ActorAgent
-from agents.config import PathConfig, APIConfig, WriterConfig, DesignerConfig
+from agents.config import PathConfig, APIConfig, WriterConfig, DesignerConfig, RAGConfig
 from agents.story_graph import StoryGraph
 from game_engine.data import StoryParser
 
-# 常量定义
+# Constants
 logger = logging.getLogger(__name__)
 
 
 class WorkflowController:
-    """工作流控制器 - 协调所有 Agent"""
+    """Workflow controller - orchestrates all agents."""
+
+    # It does not directly generate content; instead, it:
+
+    # Orchestrates different Agents
+    # Manages state (game_design)
+    # Controls the sequence of the generation process
     
     def __init__(self):
-        """初始化工作流控制器"""
-        # 确保日志和数据目录存在
+        """Initialize workflow controller."""
+        # Ensure log and data directories exist
         PathConfig.ensure_directories()
         
         self.producer = None
         self.designer = None
         self.artist = None
         self.writer = None
-        self.actors = {}  # 存储所有演员 Agent: {name: ActorAgent}
-        self.expressions_db = self._load_expressions()  # 表情库管理
+        self.actors = {}  # Store all actor agents: {name: ActorAgent}
+        self.expressions_db = self._load_expressions()  # Expression library state
+        # Default connection config for status/load paths without initialize_agents
+        self.api_key = None
+        self.base_url = None
         
         self.game_design = None
         
-        logger.info("🎮 工作流控制器初始化")
+        logger.info(" Workflow controller initialized")
     
     def initialize_agents(
         self,
@@ -52,47 +61,47 @@ class WorkflowController:
         openai_base_url: Optional[str] = None
     ):
         """
-        初始化基础 Agent (Producer, Artist, Writer)
-        Actor Agent 将在游戏设计生成后初始化
+        Initialize base agents (Producer, Artist, Writer).
+        Actor agents are initialized after game design is loaded/generated.
         """
-        logger.info("🚀 初始化 Agent 系统...")
+        logger.info(" Initializing agent system...")
         
         try:
             self.api_key = openai_api_key
             self.base_url = openai_base_url
             
-            # 初始化制作人 Agent
-            logger.info("   📋 初始化制作人 Agent (Reviewer)...")
+            # Initialize Producer agent
+            logger.info("    Initializing Producer agent (Reviewer)...")
             self.producer = ProducerAgent(api_key=openai_api_key, base_url=openai_base_url)
 
-            # 初始化策划 Agent
-            logger.info("   🎨 初始化策划 Agent (Designer)...")
+            # Initialize Designer agent
+            logger.info("    Initializing Designer agent (Designer)...")
             self.designer = DesignerAgent(api_key=openai_api_key, base_url=openai_base_url)
             
-            # 初始化美术 Agent
-            logger.info("   🎨 初始化美术 Agent...")
+            # Initialize Artist agent
+            logger.info("    Initializing Artist agent...")
             self.artist = ArtistAgent(api_key=openai_api_key, base_url=openai_base_url)
             
-            # 初始化编剧 Agent
-            logger.info("   ✍️  初始化编剧 Agent...")
+            # Initialize Writer agent
+            logger.info("     Initializing Writer agent...")
             self.writer = WriterAgent(api_key=openai_api_key, base_url=openai_base_url)
             
-            logger.info("✅ 基础 Agent 初始化完成！")
+            logger.info(" Base agents initialized")
             
         except Exception as e:
-            logger.error(f"❌ Agent 初始化失败: {e}")
+            logger.error(f" Agent initialization failed: {e}")
             raise
     def _initialize_actors(self):
-        """根据游戏设计文档初始化演员 Agent"""
+        """Initialize actor agents from game design."""
         if not self.game_design:
-            raise ValueError("游戏设计文档未加载，无法初始化演员")
+            raise ValueError("Game design is not loaded; cannot initialize actors")
             
-        logger.info("🎭 初始化演员 Agent...")
+        logger.info(" Initializing actor agents...")
         self.actors = {}
         for char_info in self.game_design.get('characters', []):
             name = char_info.get('name')
             if name:
-                # 初始化该角色的表情库
+                # Initialize expression library for this character
                 self._initialize_character_expressions(name)
                 
                 actor = ActorAgent(
@@ -102,41 +111,144 @@ class WorkflowController:
                 )
                 self.actors[name] = actor
                 is_protagonist = char_info.get('is_protagonist', False)
-                role_label = " (主角)" if is_protagonist else ""
-                logger.info(f"   ✅ 演员就位: {name}{role_label}")
+                role_label = " (Protagonist)" if is_protagonist else ""
+                logger.info(f"    Actor ready: {name}{role_label}")
     
     def create_new_game(
         self,
         character_count: int = 3,
-        requirements: str = ""
+        requirements: str = "",
+        franchise: str = "",
+        fan_characters: Optional[List[str]] = None,
+        fan_docs_dir: str = "",
+        rag_force_rebuild: bool = False,
+        rag_language: str = "",
     ) -> Dict[str, Any]:
         """
-        创建新游戏（完整流程：设计 -> 选角 -> 生成 -> 完结）
+        Create a new game (full flow: [RAG] -> design -> cast -> generate -> finalize).
+
+        Args:
+            character_count:    Number of characters (including protagonist)
+            requirements:       User requirements text (from requirements_file)
+            franchise:          Fan-fiction mode - franchise/IP name (e.g. "Genshin Impact")
+            fan_characters:     Fan-fiction mode - list of required canon characters
+            fan_docs_dir:       Fan-fiction mode - local supplemental docs directory (optional)
+            rag_force_rebuild:  Fan-fiction mode - force rebuild knowledge base
+            rag_language:       Fan-fiction mode - Wikipedia language (default from RAGConfig)
         """
         logger.info("="*60)
-        logger.info("🎬 开始创建新游戏")
+        logger.info(" Start creating a new game")
         logger.info("="*60)
         
         try:
-            # Step 1: 检查或生成游戏设计文档
-            logger.info("\n【Step 1/5】检查游戏设计文档...")
+            # ------------------------------------------------------
+            # Step 0 (fan-fiction mode): build RAG knowledge base and augment requirements
+            # ------------------------------------------------------
+            if franchise:
+                logger.info("\n[Step 0/6] Fan-fiction mode: building RAG knowledge base...")
+                logger.info(f"   IP: {franchise}")
+                logger.info(f"   Characters: {fan_characters or '(AI decides)'}")
+
+                # Lazy import to avoid extra deps when fan-fiction mode is not used
+                from agents.rag_agent import RAGAgent
+
+                language = rag_language or RAGConfig.WIKIPEDIA_LANGUAGE
+                force_rebuild = rag_force_rebuild or RAGConfig.FORCE_REBUILD
+
+                rag_agent = RAGAgent(franchise=franchise, language=language)
+                total_docs = rag_agent.build_knowledge_base(
+                    franchise=franchise,
+                    characters=fan_characters or [],
+                    docs_dir=fan_docs_dir or None,
+                    force_rebuild=force_rebuild,
+                )
+
+                logger.info(f"    Knowledge base has {total_docs} document chunks")
+                logger.info("    Injecting franchise knowledge into creation requirements...")
+
+                requirements = rag_agent.build_requirements_with_rag(
+                    user_requirements=requirements,
+                    franchise=franchise,
+                    characters=fan_characters or [],
+                )
+
+                logger.info("    RAG knowledge injection complete")
+
+                # # ------------------------------------------------------
+                # # [DEBUG MODE] Print RAG retrieval results and return early without calling generation models
+                # # TODO: Remove this block after testing (from "# [DEBUG MODE]" to "# [/DEBUG MODE]")
+                # # ------------------------------------------------------
+                # SEP = "=" * 80
+                # print(f"\n{SEP}")
+                # print(" RAG DEBUG MODE - Below are retrieval results; no generation model is called")
+                # print(SEP)
+
+                # # 1. Knowledge Base Stats
+                # print("\n [Knowledge Base Stats]")
+                # stats = rag_agent.get_stats()
+                # for k, v in stats.items():
+                #     print(f"   {k}: {v}")
+
+                # # 2. Franchise overview retrieval results
+                # print(f"\n{SEP}")
+                # print(f" [Franchise Overview - {franchise}]")
+                # print(SEP)
+                # print(rag_agent.get_franchise_overview(n_results=3))
+
+                # # 3. Per-character retrieval results (raw chunks)
+                # for char_name in (fan_characters or []):
+                #     print(f"\n{SEP}")
+                #     print(f" [Character Retrieval - {char_name}]")
+                #     print(SEP)
+
+                #     # Low-level search: show raw chunks
+                #     raw_results = rag_agent.kb.search(
+                #         f"{char_name} character personality appearance background story",
+                #         n_results=5,
+                #     )
+                #     if raw_results:
+                #         for i, doc in enumerate(raw_results, 1):
+                #             meta = doc.get("metadata", {})
+                #             print(f"\n  --- Chunk {i} | section: {meta.get('section', '?')} | source: {meta.get('source', '?')} ---")
+                #             print(f"  {doc['text'][:600]}")
+                #     else:
+                #         print("  (no result)")
+
+                # # 4. Final injected requirements (truncated)
+                # print(f"\n{SEP}")
+                # print(" [Final requirements injected to DesignerAgent (first 3000 chars)]")
+                # print(SEP)
+                # print(requirements[:3000])
+                # if len(requirements) > 3000:
+                #     print(f"\n  ...(total {len(requirements)} chars, truncated)")
+
+                # print(f"\n{SEP}")
+                # print(" RAG DEBUG complete. To generate a game, comment out the [DEBUG MODE] block in workflow.py.")
+                # print(SEP)
+                # return {"rag_debug": True, "stats": stats, "requirements_preview": requirements[:500]}
+                # # ------------------------------------------------------
+                # # [/DEBUG MODE]
+                # # ------------------------------------------------------
+
+            # Step 1: check or generate game design document
+            logger.info("\n[Step 1/6] Checking game design document...")
             existing_design = self.producer.load_game_design()
             if existing_design:
-                logger.info(f"✅ 检测到已存在的游戏设计: 《{existing_design['title']}》")
+                logger.info(f" Found existing game design: {existing_design['title']}")
                 self.game_design = existing_design
             else:
-                logger.info("   未找到游戏设计，策划开始草拟方案...")
+                logger.info("   No game design found, Designer starts drafting...")
                 self.game_design = self.designer.generate_game_design(
                     character_count=character_count,
                     requirements=requirements
                 )
                 
-                # 制作人审核方案 (多轮迭代)
+                # Producer review loop (multi-iteration)
                 max_iterations = 3
                 current_iteration = 0
                 
                 while current_iteration < max_iterations:
-                    logger.info(f"   📋 制作人正在审核设计稿 (第 {current_iteration + 1} 轮)...")
+                    logger.info(f"    Producer reviewing design draft (round {current_iteration + 1})...")
                     feedback = self.producer.critique_game_design(
                         self.game_design, 
                         requirements,
@@ -145,12 +257,12 @@ class WorkflowController:
                     )
                     
                     if feedback == "PASS":
-                        logger.info("   ✅ 制作人签署通过！")
+                        logger.info("    Approved by Producer")
                         break
                     
-                    logger.info(f"   ⚠️  制作人反馈: {feedback[:100]}...")
-                    logger.info("   🔧 策划正在根据反馈完善设计...")
-                    # 使用新的统一接口：传入 feedback 和 previous_game_design
+                    logger.info(f"     Producer feedback: {feedback[:100]}...")
+                    logger.info("    Designer is revising based on feedback...")
+                    # Use unified interface: pass feedback and previous_game_design
                     self.game_design = self.designer.generate_game_design(
                         character_count=character_count,
                         requirements=requirements,
@@ -160,32 +272,32 @@ class WorkflowController:
                     current_iteration += 1
                 
                 if current_iteration >= max_iterations:
-                    logger.warning("   ⚠️ 达到最大审核次数，制作人强制批准当前版本继续。")
+                    logger.warning("    Reached max review iterations; Producer force-approves current version.")
                 
-                # 保存最终版本
+                # Save final version
                 self.producer.save_game_design(self.game_design)
             
-            # Step 2: 初始化演员
-            logger.info("\n【Step 2/6】初始化演员阵容...")
+            # Step 2: initialize actors
+            logger.info("\n[Step 2/6] Initializing cast...")
             
-            # 确保表情库与当前游戏设计同步（清理不存在的角色）
+            # Sync expression library with current design (remove stale characters)
             self._sync_expressions_with_design()
             
             self._initialize_actors()
             
-            # Step 3: 生成完整故事
-            logger.info(f"\n【Step 3/6】生成完整故事 (DAG-based)...")
+            # Step 3: generate full story
+            logger.info(f"\n[Step 3/6] Generating full story (DAG-based)...")
             self._generate_full_story()
             
-            # Step 4: 扫描剧本，更新表情库
-            logger.info("\n【Step 4/6】扫描剧本，同步表情库...")
+            # Step 4: scan script and update expression library
+            logger.info("\n[Step 4/6] Scanning script and syncing expression library...")
             self._scan_story_for_expressions()
             
-            # Step 5: 生成所有美术资源 (背景 + 立绘)
-            logger.info("\n【Step 5/6】生成美术资源 (背景 + 角色立绘)...")
+            # Step 5: generate all art assets (backgrounds + sprites)
+            logger.info("\n[Step 5/6] Generating art assets (backgrounds + character sprites)...")
             
-            # 2. 生成场景背景
-            logger.info("   🎨 生成场景背景...")
+            # 2. Generate scene backgrounds
+            logger.info("    Generating scene backgrounds...")
             locations = [scene['name'] for scene in self.game_design.get('scenes', [])]
             self.artist.generate_all_backgrounds(
                 locations,
@@ -193,24 +305,24 @@ class WorkflowController:
                 art_style=self.game_design.get('art_style')
             )
             
-            # 3. 生成所有角色立绘
-            logger.info("   👥 生成所有角色立绘...")
+            # 3. Generate all character sprites
+            logger.info("    Generating all character sprites...")
             self._generate_character_assets()
             
-            # Step 6: 生成标题画面 (此时已有所有美术资源)
-            logger.info("\n【Step 6/6】生成标题画面...")
+            # Step 6: generate title screen (all art assets are now available)
+            logger.info("\n[Step 6/6] Generating title screen...")
             character_ref_images = []
             for char_info in self.game_design.get('characters', []):
                 char_id = char_info.get('id', char_info.get('name'))
-                # 尝试查找 neutral 或其他表情
+                # Try finding neutral or other expressions
                 char_dir = os.path.join(PathConfig.CHARACTERS_DIR, char_id)
                 if os.path.exists(char_dir):
-                    # 优先找 neutral
+                    # Prefer neutral
                     neutral_path = os.path.join(char_dir, "neutral.png")
                     if os.path.exists(neutral_path):
                         character_ref_images.append(neutral_path)
                     else:
-                        # 找任意一张 png
+                        # Fallback to any png
                         try:
                             files = [f for f in os.listdir(char_dir) if f.endswith('.png')]
                             if files:
@@ -225,11 +337,11 @@ class WorkflowController:
             )
             
             logger.info("\n" + "="*60)
-            logger.info("🎉 游戏制作全部完成！")
+            logger.info(" Game production complete")
             return self.game_design
             
         except Exception as e:
-            logger.error(f"❌ 游戏创建失败: {e}")
+            logger.error(f" Game creation failed: {e}")
             raise
 
     def _generate_expression_with_critique(
@@ -240,35 +352,35 @@ class WorkflowController:
         additional_feedback: str = ""
     ) -> Optional[str]:
         """
-        生成单个表情立绘并进行审核循环
+        Generate a single expression sprite with critique/retry loop
         
         Args:
-            actor: 演员 Agent
-            expression: 表情名称
-            reference_image_path: 参考图路径 (通常是 neutral 表情)
-            additional_feedback: 额外的描述信息 (如演员对表情的描述)
+            actor: Actor agent
+            expression: expression name
+            reference_image_path: reference image path (usually neutral expression)
+            additional_feedback: extra guidance text (e.g. actor expression description)
             
         Returns:
-            生成成功则返回图片路径，否则返回 None
+            Returns image path on success, otherwise None
         """
         max_retries = 3
         current_try = 0
         feedback = additional_feedback
-        previous_attempt_path = None  # 保存上一次生成的图片路径
+        previous_attempt_path = None  # Save image path from previous attempt
         
         while current_try < max_retries:
-            logger.info(f"      🖼️  生成表情 [{expression}] (尝试 {current_try + 1}/{max_retries})...")
+            logger.info(f"        Generating expression [{expression}] (attempt {current_try + 1}/{max_retries})...")
             
-            # 准备参考图列表：
-            # 1. 始终包含最基础的参考图 (通常是 neutral) 作为正面锚点
-            # 2. 如果之前有重试失败的图，也一并传入作为上下文参考 (帮助 AI 理解哪里需要改)
+            # Build reference image list:
+            # 1) Always include base reference (usually neutral) as a positive anchor
+            # 2) Include previous failed attempt as additional context when available
             ref_paths = []
             if reference_image_path:
                 ref_paths.append(reference_image_path)
             if previous_attempt_path:
                 ref_paths.append(previous_attempt_path)
             
-            # 生成图片
+            # Generate image
             generated_paths = self.artist.generate_character_images(
                 character=actor.character_info,
                 expressions=[expression],
@@ -280,63 +392,63 @@ class WorkflowController:
             
             image_path = generated_paths.get(expression)
             if not image_path:
-                logger.warning(f"      ❌ 图片生成失败")
+                logger.warning(f"       Image generation failed")
                 return None
                 
-            # 审核图片
+            # Critique image
             critique_result = actor.critique_visual(
                 image_path=image_path, 
                 expression=expression,
-                reference_image_path=reference_image_path,  # 审核时仍用neutral作为参考
+                reference_image_path=reference_image_path,  # Use neutral as reference during critique
                 story_background=self.game_design.get('background'),
                 art_style=self.game_design.get('art_style')
             )
             
             if critique_result == "PASS":
-                logger.info(f"      ✅ 审核通过: {expression}")
+                logger.info(f"       Critique passed: {expression}")
                 return image_path
             else:
-                logger.warning(f"      ⚠️  审核未通过: {critique_result[:100]}...")
+                logger.warning(f"        Critique failed: {critique_result[:100]}...")
                 
-                # 存档不合格图片及元数据到 image_log 文件夹 (供论文分析使用)
+                # Archive failed image and metadata to image_log (for analysis)
                 try:
                     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                     base_name = f"FAILED_{timestamp}_{actor.name}_{expression}"
                     
-                    # 1. 存档图片
+                    # 1) Archive image
                     fail_path = os.path.join(PathConfig.IMAGE_LOG_DIR, f"{base_name}.png")
                     shutil.copy2(image_path, fail_path)
                     
-                    # 2. 存档元数据 (角色信息、反馈等)
+                    # 2) Archive metadata (character info, feedback, etc.)
                     meta_path = os.path.join(PathConfig.IMAGE_LOG_DIR, f"{base_name}.json")
                     meta_data = {
                         "timestamp": timestamp,
                         "character": actor.character_info,
                         "expression": expression,
-                        "prompt_feedback": feedback,     # 本轮生成时使用的反馈
-                        "critique_result": critique_result, # 审核员给出的拒绝理由
+                        "prompt_feedback": feedback,     # Feedback used for this attempt
+                        "critique_result": critique_result, # Rejection reason from critique agent
                         "try_count": current_try + 1
                     }
                     with open(meta_path, 'w', encoding='utf-8') as f:
                         json.dump(meta_data, f, ensure_ascii=False, indent=4)
                         
-                    logger.info(f"      📤 已将不合格样本存档至: {PathConfig.IMAGE_LOG_DIR}")
-                    previous_attempt_path = fail_path # 作为下一轮的反面参考
+                    logger.info(f"       Archived failed sample to: {PathConfig.IMAGE_LOG_DIR}")
+                    previous_attempt_path = fail_path # Use as negative reference in next round
                 except Exception as e:
-                    logger.warning(f"      ⚠️  存档失败: {e}")
+                    logger.warning(f"        Archive failed: {e}")
                     previous_attempt_path = image_path
                 
                 current_try += 1
                 
-                # 合并审核意见到下一轮反馈
+                # Merge critique into next-round feedback
                 if additional_feedback:
                     feedback = f"{additional_feedback}\n\nPrevious critique: {critique_result}"
                 else:
                     feedback = critique_result
                 
-                # 达到最大重试次数，保留最后一次生成的图片
+                # Reached max retries; keep last generated image
                 if current_try >= max_retries:
-                    logger.warning(f"      ⚠️  达到最大重试次数，保留最后一次生成的图片用于游戏")
+                    logger.warning(f"        Reached max retries; keep last generated image for gameplay")
                     return image_path
         
         return None
@@ -347,32 +459,32 @@ class WorkflowController:
 
     def _generate_character_assets(self):
         """
-        生成所有角色立绘资源（带审核循环）
-        策略：
-        1. 先生成所有角色的 neutral（主角优先作为风格参考，其他角色以主角为参考）
-        2. 再生成所有其他表情（使用各自的 neutral 作为参考）
+        Generate all character sprite assets (with critique loop).
+        Strategy:
+        1. Generate neutral for all characters first (protagonist as style reference).
+        2. Generate other expressions using each character's neutral as reference.
         """
-        logger.info("🎨 生成角色立绘资源...")
+        logger.info(" Generating character sprite assets...")
         
-        # 第一步：生成所有角色的 neutral 表情
-        logger.info("   📋 第一阶段：生成所有角色的 neutral 表情")
+        # Phase 1: generate neutral expressions for all characters
+        logger.info("    Phase 1: generate neutral expressions for all characters")
         
         style_reference_image = None
         
-        # 优先生成主角 neutral 作为全局风格基准
+        # Generate protagonist neutral first as global style reference
         for char_name, actor in self.actors.items():
             if actor.character_info.get('is_protagonist', False):
-                logger.info(f"      🌟 生成主角 {char_name} 的 neutral...")
+                logger.info(f"       Generating protagonist {char_name} neutral...")
                 
                 char_id = actor.character_info.get('id', actor.name)
                 char_dir = os.path.join(PathConfig.CHARACTERS_DIR, char_id)
                 neutral_path = os.path.join(char_dir, "neutral.png")
                 
                 if os.path.exists(neutral_path):
-                    logger.info(f"         ✅ 已存在，将作为全局风格参考")
+                    logger.info(f"          Already exists; using as global style reference")
                     style_reference_image = neutral_path
                 else:
-                    logger.info(f"         🎨 生成中...")
+                    logger.info(f"          Generating...")
                     neutral_path = self._generate_expression_with_critique(
                         actor=actor,
                         expression="neutral",
@@ -381,30 +493,30 @@ class WorkflowController:
                     )
                     if neutral_path:
                         style_reference_image = neutral_path
-                        logger.info(f"         ✅ 生成完成，将作为全局风格参考")
+                        logger.info(f"          Generated; using as global style reference")
                     else:
-                        logger.error(f"         ❌ 生成失败（API 调用失败）")
+                        logger.error(f"          Generation failed (API call failed)")
                 
                 break
         
         if not style_reference_image:
-            logger.warning("      ⚠️  主角 neutral 不存在，其他角色将独立生成")
+            logger.warning("        Protagonist neutral missing; other characters will be generated independently")
         
-        # 生成其他角色的 neutral
+        # Generate neutral for other characters
         for char_name, actor in self.actors.items():
             if actor.character_info.get('is_protagonist', False):
-                continue  # 主角已处理
+                continue  # Protagonist already processed
             
-            logger.info(f"      👤 生成角色 {char_name} 的 neutral...")
+            logger.info(f"       Generating {char_name} neutral...")
             
             char_id = actor.character_info.get('id', actor.name)
             char_dir = os.path.join(PathConfig.CHARACTERS_DIR, char_id)
             neutral_path = os.path.join(char_dir, "neutral.png")
             
             if os.path.exists(neutral_path):
-                logger.info(f"         ✅ 已存在")
+                logger.info(f"          Already exists")
             else:
-                logger.info(f"         🎨 生成中...")
+                logger.info(f"          Generating...")
                 neutral_path = self._generate_expression_with_critique(
                     actor=actor,
                     expression="neutral",
@@ -413,46 +525,46 @@ class WorkflowController:
                 )
                 
                 if neutral_path:
-                    logger.info(f"         ✅ 生成完成")
+                    logger.info(f"          Generated successfully")
                 else:
-                    logger.error(f"         ❌ 生成失败（API 调用失败）")
+                    logger.error(f"          Generation failed (API call failed)")
         
-        # 第二步：生成所有其他表情
-        logger.info("   📋 第二阶段：生成所有其他表情")
+        # Phase 2: generate all other expressions
+        logger.info("    Phase 2: generate all other expressions")
         
         for char_name, actor in self.actors.items():
             char_id = actor.character_info.get('id', actor.name)
             char_dir = os.path.join(PathConfig.CHARACTERS_DIR, char_id)
             
-            # 获取该角色所有注册的表情
+            # Get all registered expressions for this character
             expressions = self._get_character_expressions(char_name)
             
-            # 获取 neutral 作为参考
+            # Use neutral as reference
             neutral_path = os.path.join(char_dir, "neutral.png")
             ref_path = neutral_path if os.path.exists(neutral_path) else None
             
-            # 过滤出非 neutral 的表情
+            # Filter non-neutral expressions
             other_expressions = [e for e in expressions if e != "neutral"]
             
             if not other_expressions:
                 continue
             
-            logger.info(f"      👤 生成角色 {char_name} 的其他表情: {other_expressions}")
+            logger.info(f"       Generating other expressions for {char_name}: {other_expressions}")
             
             for expr in other_expressions:
-                # 检查文件是否存在
+                # Check if file already exists
                 img_path = os.path.join(char_dir, f"{expr}.png")
                 if os.path.exists(img_path):
-                    logger.info(f"         ✓ {expr} 已存在")
+                    logger.info(f"          {expr} Already exists")
                     continue
                 
-                logger.info(f"         🎨 生成 {expr}...")
+                logger.info(f"          Generating {expr}...")
                 
-                # 让 Actor 描述这个表情
+                # Let Actor describe this expression
                 description = actor.generate_expression_description(expr)
                 additional_feedback = f"Expression description: {description}"
                 
-                # 使用审核循环生成
+                # Generate with critique loop
                 result_path = self._generate_expression_with_critique(
                     actor=actor,
                     expression=expr,
@@ -461,37 +573,37 @@ class WorkflowController:
                 )
                 
                 if result_path:
-                    logger.info(f"         ✅ {expr} 生成完成")
+                    logger.info(f"          {expr} Generated successfully")
                 else:
-                    logger.error(f"         ❌ {expr} 生成失败")
+                    logger.error(f"          {expr} generation failed")
 
     def _scan_story_for_expressions(self):
         """
-        扫描 story.txt 文件，提取所有角色表情标签并更新表情库
-        确保剧本中实际使用的所有表情都被记录
+        Scan story.txt, extract character expression tags, and update expression library.
+        Ensure all expressions used in script are recorded.
         """
-        logger.info("📖 扫描剧本文件，检测表情使用情况...")
+        logger.info(" Scanning script file for expression usage...")
         
         story_path = PathConfig.STORY_FILE
         if not os.path.exists(story_path):
-            logger.warning("   ⚠️ story.txt 文件不存在，跳过扫描")
+            logger.warning("    story.txt not found, skipping scan")
             return
         
         try:
             with open(story_path, 'r', encoding='utf-8') as f:
                 story_content = f.read()
             
-            # 提取所有 <image id="角色名">表情</image> 标签
-            # 正则匹配：支持中文角色名
+            # Extract all <image id="CharacterName">expression</image> tags
+            # Regex supports non-English character names
             import re
             pattern = r'<image\s+id="([^"]+)">([^<]+)</image>'
             matches = re.findall(pattern, story_content)
             
             if not matches:
-                logger.info("   ℹ️ 剧本中没有找到角色表情标签")
+                logger.info("   No character expression tags found in script")
                 return
             
-            # 统计每个角色使用的表情
+            # Count expressions used per character
             character_expressions_in_story = {}
             for char_name, expression in matches:
                 char_name = char_name.strip()
@@ -501,53 +613,53 @@ class WorkflowController:
                     character_expressions_in_story[char_name] = set()
                 character_expressions_in_story[char_name].add(expression)
             
-            # 更新表情库
+            # Update expression library
             updated_count = 0
             for char_name, expressions in character_expressions_in_story.items():
-                # 检查该角色是否存在于演员列表中
+                # Check whether this character exists in actor list
                 if char_name not in self.actors:
-                    logger.warning(f"   ⚠️ 剧本中出现未知角色: {char_name}，跳过")
+                    logger.warning(f"    Unknown character in script: {char_name}, skipping")
                     continue
                 
-                # 添加新表情
+                # Add new expressions
                 added = self._add_expressions_to_character(char_name, list(expressions))
                 if added:
-                    logger.info(f"   ✨ 角色 {char_name} 新增表情: {added}")
+                    logger.info(f"    New expressions for {char_name}: {added}")
                     updated_count += len(added)
             
             if updated_count > 0:
-                logger.info(f"   ✅ 表情库已更新，新增 {updated_count} 个表情")
+                logger.info(f"    Expression library updated, added {updated_count} expressions")
             else:
-                logger.info("   ✅ 表情库已是最新，无需更新")
+                logger.info("    Expression library already up to date")
                 
         except Exception as e:
-            logger.error(f"   ❌ 扫描剧本失败: {e}")
+            logger.error(f"    Failed to scan script: {e}")
 
     def _generate_full_story(self):
-        """生成完整的故事（支持树和DAG结构）"""
+        """Generate full story (supports tree and DAG structures)."""
         try:
-            # 创建故事图对象（自动兼容树和DAG）
+            # Create story graph object (auto-compatible with tree and DAG)
             story_graph = StoryGraph(self.game_design)
             
-            # 验证图结构
+            # Validate graph structure
             is_valid, error_msg = story_graph.validate()
             if not is_valid:
-                logger.error(f"❌ 故事图验证失败: {error_msg}")
+                logger.error(f" Story graph validation failed: {error_msg}")
                 return
             
-            # 使用拓扑排序确定生成顺序
+            # Use topological sorting to determine generation order
             node_order = story_graph.topological_sort()
-            logger.info(f"📋 故事图包含 {len(node_order)} 个节点")
+            logger.info(f" Story graph contains {len(node_order)} nodes")
             
-            # 节点摘要和内容缓存
+            # Node summary and content cache
             node_summaries = {}
             node_contents = {}
             
             for idx, node_id in enumerate(node_order, 1):
                 node_info = story_graph.get_node(node_id)
-                logger.info(f"\n📅 [{idx}/{len(node_order)}] 正在制作节点: {node_id}")
+                logger.info(f"\n [{idx}/{len(node_order)}] Generating node: {node_id}")
                 
-                # 检查是否已存在
+                # Check whether node content already exists
                 story_path = Path(PathConfig.STORY_FILE)
                 node_exists = False
                 if story_path.exists():
@@ -555,9 +667,9 @@ class WorkflowController:
                         content = f.read()
                         if f"=== Node: {node_id} ===" in content:
                             node_exists = True
-                            logger.info(f"   ⏭️ 节点剧情已存在，跳过生成")
+                            logger.info(f"   Node script already exists, skipping generation")
                             
-                            # 提取内容用于上下文
+                            # Extract content for context
                             pattern = f"=== Node: {node_id} ===(.*?)(=== Node|$)"
                             match = re.search(pattern, content, re.DOTALL)
                             if match:
@@ -568,47 +680,47 @@ class WorkflowController:
                                     node_summaries[node_id] = node_summary
                 
                 if not node_exists:
-                    # 构建上下文（支持多父节点）
+                    # Build context (supports multiple parents)
                     parents = story_graph.get_parents(node_id)
                     
-                    # 长期记忆：祖先节点摘要
+                    # Long-term memory: ancestor node summaries
                     long_term_memory = self._build_long_term_memory(
                         node_id, story_graph, node_summaries
                     )
                     
-                    # 短期记忆：直接父节点的完整内容
+                    # Short-term memory: full content of direct parent nodes
                     short_term_memory = ""
                     if parents:
                         if len(parents) > 1:
-                            # 汇合点：提示 LLM 有多条路径汇合
+                            # Merge node: tell LLM multiple paths have converged
                             parent_summaries = [
-                                f"【路径{i+1}】{node_summaries.get(p, '(无摘要)')}" 
+                                f"[Path {i+1}] {node_summaries.get(p, '(no summary)')}" 
                                 for i, p in enumerate(parents) if p in node_summaries
                             ]
                             short_term_memory = (
-                                "多条剧情路径在此汇合，请基于公共记忆继续故事：\n" + 
+                                "Multiple story paths converge here. Continue from shared memory:\n" + 
                                 "\n".join(parent_summaries)
                             )
                         else:
-                            # 普通节点：使用完整父节点内容
+                            # Normal node: use full parent node content
                             parent_contents = [node_contents.get(p, "") for p in parents if p in node_contents]
                             short_term_memory = "\n\n".join(parent_contents)
                     
-                    full_context = f"{long_term_memory}\n\n【最近剧情】:\n{short_term_memory}"
+                    full_context = f"{long_term_memory}\n\n[Recent story]:\n{short_term_memory}"
                     
-                    # 生成剧情
+                    # Generate script
                     node_performance_data = []
                     plot_summary = node_info.get('summary', '')
                     
-                    # 找出登场角色
+                    # Identify present characters
                     char_names = list(self.actors.keys())
-                    present_actors = list(self.actors.items())  # 直接用全体角色
+                    present_actors = list(self.actors.items())  # Use all characters directly
                     
                     if present_actors:
-                        # ==================== 第一步：拆分剧情片段 ====================
-                        logger.info(f"✂️  正在切分节点 {node_id} 的剧情片段...")
+                        # ==================== Step 1: split into plot segments ====================
+                        logger.info(f"  Splitting node {node_id} into plot segments...")
                         available_scenes = [scene['name'] for scene in self.game_design.get('scenes', [])]
-                        # 获取完整的角色信息
+                        # Get full character metadata
                         available_characters = self.game_design.get('characters', [])
                         
                         plots = self.writer.split_node_into_plots(
@@ -620,44 +732,44 @@ class WorkflowController:
                         )
                         
                         if not plots:
-                            logger.warning(f"⚠️ 节点 {node_id} 剧情切分失败，使用原始概要")
+                            logger.warning(f" Failed to split node {node_id} into plots, using original summary")
                             plots = [{"id": 1, "summary": plot_summary}]
                         
-                        logger.info(f"✅ 已切分为 {len(plots)} 个片段")
+                        logger.info(f" Split into {len(plots)} segments")
                         
-                        # ==================== 第二步：对每个片段进行表演循环 ====================
+                        # ==================== Step 2: performance loop per segment ====================
                         all_plot_contexts = []
                         performance_log_path = os.path.join(PathConfig.TEXT_LOG_DIR, f"performance_{node_id}.jsonl")
                         
-                        # 清理旧的表演日志（如果存在），确保重新生成时覆盖
+                        # Clear old performance log (if exists) so regeneration overwrites it
                         if os.path.exists(performance_log_path):
                             os.remove(performance_log_path)
-                            logger.info(f"🗑️  已清理节点 {node_id} 的旧表演日志")
+                            logger.info(f"  Cleared old performance log for node {node_id}")
                         
                         for plot_idx, plot_info in enumerate(plots, 1):
                             plot_id = plot_info.get('id', plot_idx)
                             current_plot_summary = plot_info.get('summary', plot_summary)
                             
-                            logger.info(f"🎬 执行片段 {plot_idx}/{len(plots)}: {current_plot_summary[:50]}...")
+                            logger.info(f" Executing segment {plot_idx}/{len(plots)}: {current_plot_summary[:50]}...")
                             
-                            # 该片段的对话累积缓冲
+                            # Dialogue accumulation buffer for this segment
                             plot_current_context = ""
                             turn_count = 0
-                            safety_limit = 50  # 安全限制固定为50轮
-                            speaker_retry_count = 0  # 导演重试计数
+                            safety_limit = 50  # Fixed safety cap: 50 turns
+                            speaker_retry_count = 0  # Director retry counter
                             max_speaker_retries = 3
                             
-                            # 构建该片段的上下文：全局历史 + 前面的片段内容
+                            # Build segment context: global history + previous segments
                             previous_plots_context = "\n\n".join(all_plot_contexts) if all_plot_contexts else ""
                             plot_full_context = full_context
                             if previous_plots_context:
-                                plot_full_context += f"\n\n【前面的片段】:\n{previous_plots_context}"
+                                plot_full_context += f"\n\n[Previous segments]:\n{previous_plots_context}"
                             
                             while turn_count < safety_limit:
-                                current_total_context = f"{plot_full_context}\n\n【当前片段对话】:\n{plot_current_context}"
+                                current_total_context = f"{plot_full_context}\n\n[Current segment dialogue]:\n{plot_current_context}"
                                 
                                 present_char_names = [name for name, _ in present_actors]
-                                # 从 ActorAgent 中提取角色信息字典
+                                # Extract character info dicts from ActorAgent
                                 present_char_info = [actor.character_info for _, actor in present_actors]
                                 next_speaker_name, plot_guidance = self.writer.decide_next_speaker(
                                     plot_summary=current_plot_summary,
@@ -666,7 +778,7 @@ class WorkflowController:
                                 )
                                 
                                 if "STOP" in next_speaker_name:
-                                    logger.info(f"🎬 片段 {plot_idx} 的导演喊卡")
+                                    logger.info(f" Director calls STOP for segment {plot_idx}")
                                     break
                                 
                                 next_actor = None
@@ -679,18 +791,18 @@ class WorkflowController:
                                 
                                 if not next_actor:
                                     speaker_retry_count += 1
-                                    logger.warning(f"⚠️ 导演指定了未知角色: {next_speaker_name}，重新指定发言者 (重试 {speaker_retry_count}/{max_speaker_retries})...")
+                                    logger.warning(f" Director selected unknown character: {next_speaker_name}; retry speaker selection ({speaker_retry_count}/{max_speaker_retries})...")
                                     if speaker_retry_count < max_speaker_retries:
-                                        # 继续循环，让导演重新决策
+                                        # Continue loop and let director decide again
                                         continue
                                     else:
-                                        logger.warning(f"⚠️ 导演在 {max_speaker_retries} 次重试后仍未指定有效角色，结束本片段对话")
+                                        logger.warning(f" Director failed to pick a valid character after {max_speaker_retries} retries; ending this segment dialogue")
                                         break
                                 
-                                # 成功获取有效角色，重置重试计数
+                                # Valid character selected, reset retry counter
                                 speaker_retry_count = 0
                                 
-                                # 构建其他角色的完整信息
+                                # Build full metadata for other characters
                                 other_chars = [
                                     actor.character_info for char_name, actor in present_actors
                                     if char_name != next_char_name
@@ -699,7 +811,7 @@ class WorkflowController:
                                 
                                 enhanced_plot_summary = current_plot_summary
                                 if plot_guidance:
-                                    enhanced_plot_summary += f"\n【导演指导】{plot_guidance}"
+                                    enhanced_plot_summary += f"\n[Director guidance]{plot_guidance}"
                                 
                                 performance = next_actor.perform_plot(
                                     plot_summary=enhanced_plot_summary,
@@ -708,7 +820,7 @@ class WorkflowController:
                                     character_expressions=available_expressions
                                 )
                                 
-                                # 记录演员表演
+                                # Log actor performance
                                 self._log_performance(performance_log_path, {
                                     "node_id": node_id,
                                     "plot_id": plot_id,
@@ -724,19 +836,19 @@ class WorkflowController:
                                     break
                             
                             all_plot_contexts.append(plot_current_context)
-                            logger.info(f"✅ 片段 {plot_idx} 完成 ({turn_count} 轮对话)")
+                            logger.info(f" Segment {plot_idx} complete ({turn_count} dialogue turns)")
                         
-                        # ==================== 第三步：整合所有片段成完整剧本 ====================
-                        logger.info(f"✍️  Writer 正在整合节点 {node_id} 的所有片段...")
+                        # ==================== Step 3: merge all segments into final script ====================
+                        logger.info(f"  Writer is merging all segments for node {node_id}...")
                         
-                        # 所有片段的完整对话
+                        # Full dialogue from all segments
                         current_context = "\n\n".join(all_plot_contexts)
                         
-                        # 获取选项信息
+                        # Get choice information
                         children = story_graph.get_children(node_id)
                         choices_data = [{"target": child_id, "text": choice_text} for child_id, choice_text in children]
                         
-                        # 调用 writer 润色整合
+                        # Let writer polish and synthesize
                         polished_script = self.writer.synthesize_script(
                             plot_performances=[{"content": current_context}],
                             choices=choices_data,
@@ -745,23 +857,23 @@ class WorkflowController:
                             available_characters=available_characters
                         )
                         
-                        # 保存润色后的剧本
+                        # Save polished script
                         self._save_node_story(node_id, polished_script)
                         node_contents[node_id] = polished_script
                         node_summary = self.writer.summarize_story(polished_script)
                         node_summaries[node_id] = node_summary
                     
-                    logger.info(f"✅ 节点 {node_id} 剧情生成完成")
+                    logger.info(f" Node {node_id} script generation complete")
             
-            logger.info("\n🎉 完整故事生成完成！")
+            logger.info("\n Full story generation complete")
             
         except Exception as e:
-            logger.error(f"❌ 故事生成失败: {e}", exc_info=True)
+            logger.error(f" Story generation failed: {e}", exc_info=True)
 
     def load_existing_game(self) -> bool:
-        """加载已存在的游戏数据"""
+        """Load existing game data."""
         try:
-            # 如果 producer 还没初始化，先尝试加载
+            # If producer is not initialized, initialize it first
             if not self.producer:
                 self.producer = ProducerAgent()
                 
@@ -769,49 +881,49 @@ class WorkflowController:
             if not self.game_design:
                 return False
                 
-            # 初始化演员
+            # Initialize actors
             self._initialize_actors()
             
             return True
         except Exception as e:
-            logger.error(f"❌ 加载游戏失败: {e}")
+            logger.error(f" Failed to load game: {e}")
             return False
 
     def _load_expressions(self) -> Dict[str, List[str]]:
-        """加载现有的表情库"""
+        """Load existing expression library."""
         expr_file = os.path.join(PathConfig.DATA_DIR, "character_expressions.json")
         if os.path.exists(expr_file):
             try:
                 with open(expr_file, 'r', encoding='utf-8') as f:
                     return json.load(f)
             except Exception as e:
-                logger.warning(f"⚠️ 加载表情库失败: {e}，创建新库")
+                logger.warning(f" Failed to load expression library: {e}; creating a new one")
                 return {}
         return {}
 
     def _save_expressions(self):
-        """保存表情库到文件"""
+        """Save expression library to file."""
         expr_file = os.path.join(PathConfig.DATA_DIR, "character_expressions.json")
         try:
             with open(expr_file, 'w', encoding='utf-8') as f:
                 json.dump(self.expressions_db, f, ensure_ascii=False, indent=2)
         except Exception as e:
-            logger.error(f"❌ 保存表情库失败: {e}")
+            logger.error(f" Failed to save expression library: {e}")
 
     def _get_character_expressions(self, character_name: str) -> List[str]:
-        """获取角色的现有表情库"""
+        """Get existing expression library for a character."""
         return self.expressions_db.get(character_name, [])
     
     def _add_expressions_to_character(self, character_name: str, expressions: List[str]) -> List[str]:
         """
-        添加表情到角色表情库
+        Add expressions to a character expression library
         
         Args:
-            character_name: 角色名
-            expressions: 要添加的表情列表
+            character_name: Character name
+            expressions: Expressions to add
             
         Returns:
-            新增的表情列表
+            Newly added expressions
         """
         current_expressions = set(self._get_character_expressions(character_name))
         new_expressions = [expr for expr in expressions if expr not in current_expressions]
@@ -821,14 +933,14 @@ class WorkflowController:
                 self.expressions_db[character_name] = []
             
             self.expressions_db[character_name].extend(new_expressions)
-            self.expressions_db[character_name] = list(set(self.expressions_db[character_name]))  # 去重
+            self.expressions_db[character_name] = list(set(self.expressions_db[character_name]))  # Deduplicate
             self._save_expressions()
             
         return new_expressions
 
     def _update_character_expressions(self, character_name: str, text: str) -> List[str]:
-        """从文本中提取表情标签，更新该角色的表情库"""
-        # 提取所有 <image id="name">expression</image> 标签
+        """Extract expression tags from text and update character expression library."""
+        # Extract all <image id="name">expression</image> tags
         pattern = rf'<image\s+id="{re.escape(character_name)}">([^<]+)</image>'
         extracted_expressions = list(set(re.findall(pattern, text)))
         
@@ -837,53 +949,53 @@ class WorkflowController:
         
         added = self._add_expressions_to_character(character_name, extracted_expressions)
         if added:
-            logger.info(f"✨ 角色 {character_name} 新增表情: {added}")
+            logger.info(f" New expressions for {character_name}: {added}")
         return added
 
     def _initialize_character_expressions(self, character_name: str):
-        """初始化角色的表情库"""
+        """Initialize character expression library."""
         if character_name not in self.expressions_db:
             from agents.config import STANDARD_EXPRESSIONS
             initial_expressions = STANDARD_EXPRESSIONS.copy()
             self.expressions_db[character_name] = initial_expressions
             self._save_expressions()
-            logger.info(f"✅ 初始化角色 {character_name} 的表情库: {initial_expressions}")
+            logger.info(f" Initialized expression library for {character_name}: {initial_expressions}")
 
     def _get_expressions_str(self, character_name: str) -> str:
-        """获取角色表情库的字符串表示"""
+        """Get comma-separated string of character expressions."""
         expressions = self._get_character_expressions(character_name)
         if not expressions:
             return "neutral, happy, sad, angry, surprised, shy"
         return ", ".join(expressions)
 
     def _sync_expressions_with_design(self):
-        """确保表情库与当前游戏设计同步"""
+        """Ensure expression library is synced with current game design."""
         if not self.game_design:
             return
             
         current_character_names = set(c.get('name') for c in self.game_design.get('characters', []) if c.get('name'))
         existing_character_names = set(self.expressions_db.keys())
         
-        # 找出需要删除的角色
+        # Find characters to remove
         to_remove = existing_character_names - current_character_names
         
         if to_remove:
-            logger.info(f"🧹 同步表情库：删除旧角色 {list(to_remove)}")
+            logger.info(f" Sync expression library: remove stale characters {list(to_remove)}")
             for name in to_remove:
                 del self.expressions_db[name]
             self._save_expressions()
 
     def get_game_status(self) -> Dict[str, Any]:
         """
-        获取当前游戏状态
+        Get current game status.
         
         Returns:
-            游戏状态字典
+            Game status dictionary
         """
         if not self.game_design:
             return {"initialized": False}
         
-        # 统计已生成的节点数
+        # Count generated nodes
         total_nodes = len(self.game_design.get("story_graph", {}).get("nodes", {}))
         completed_nodes = 0
         
@@ -909,35 +1021,35 @@ class WorkflowController:
         node_summaries: Dict[str, str]
     ) -> str:
         """
-        构建长期上下文（祖先节点的摘要）
+        Build long-term context from ancestor node summaries.
         
-        对于汇合点：只使用公共祖先，避免互斥路径的混淆
+        For merge nodes: only use common ancestors to avoid conflicting branches.
         
         Args:
-            node_id: 当前节点ID
-            story_graph: 故事图对象
-            node_summaries: 节点摘要缓存
+            node_id: Current node ID
+            story_graph: Story graph object
+            node_summaries: Node summary cache
             
         Returns:
-            上下文文本
+            Context text
         """
         parents = story_graph.get_parents(node_id)
         
-        # 如果是汇合点（多个父节点）
+        # If this is a merge node (multiple parents)
         if len(parents) > 1:
-            # 找到所有父节点的公共祖先
+            # Find common ancestors across all parents
             ancestor_sets = []
             for parent in parents:
                 ancestors = self._get_ancestors(parent, story_graph)
                 ancestor_sets.append(ancestors)
             
-            # 取交集 - 只使用所有路径都经过的节点
+            # Intersect sets: keep nodes shared by all paths
             if ancestor_sets:
                 common_ancestors = set.intersection(*ancestor_sets)
             else:
                 common_ancestors = set()
             
-            # 构建上下文（按ID排序）
+            # Build context (sorted by ID)
             context_parts = []
             for ancestor_id in sorted(common_ancestors):
                 if ancestor_id in node_summaries:
@@ -946,9 +1058,9 @@ class WorkflowController:
             if context_parts:
                 return "\n".join(context_parts)
             else:
-                return "故事开始（多条路径在此汇合）。"
+                return "Story starts (multiple paths converge here)."
         
-        # 普通节点：使用所有祖先
+        # Normal node: use all ancestors
         else:
             ancestors = set()
             queue = parents.copy()
@@ -959,16 +1071,16 @@ class WorkflowController:
                     ancestors.add(parent)
                     queue.extend(story_graph.get_parents(parent))
             
-            # 构建上下文
+            # Build context
             context_parts = []
             for ancestor_id in sorted(ancestors):
                 if ancestor_id in node_summaries:
                     context_parts.append(f"Node {ancestor_id}: {node_summaries[ancestor_id]}")
             
-            return "\n".join(context_parts) if context_parts else "游戏开始。"
+            return "\n".join(context_parts) if context_parts else "Game starts."
     
     def _get_ancestors(self, node_id: str, story_graph: 'StoryGraph') -> set:
-        """获取节点的所有祖先（BFS）"""
+        """Get all ancestors of a node (BFS)."""
         ancestors = set()
         queue = [node_id]
         
@@ -982,11 +1094,11 @@ class WorkflowController:
     
     def _save_node_story(self, node_id: str, content: str):
         """
-        保存节点剧情到文件
+        Save node script to file.
         
         Args:
-            node_id: 节点ID
-            content: 剧情内容
+            node_id: Node ID
+            content: Script content
         """
         story_path = Path(PathConfig.STORY_FILE)
         with open(story_path, 'a', encoding='utf-8') as f:
@@ -996,10 +1108,10 @@ class WorkflowController:
     
     def _append_choices_to_story(self, node_id: str, children: List[tuple]):
         """
-        在剧情文件中添加选项
+        Append choices to the story file.
         
         Args:
-            node_id: 当前节点ID
+            node_id: Current node ID
             children: [(child_id, choice_text), ...]
         """
         story_path = Path(PathConfig.STORY_FILE)
@@ -1009,34 +1121,34 @@ class WorkflowController:
                 if choice_text:
                     f.write(f'<choice target="{child_id}">{choice_text}</choice>\n')
                 else:
-                    # 没有明确选项文本，生成默认选项（通常不应该出现在多选场景）
-                    default_text = f"选项{idx}"
-                    logger.warning(f"⚠️ 节点 {node_id} 的子节点 {child_id} 缺少 choice_text，使用默认值: {default_text}")
+                    # No explicit choice text; generate default option (normally unexpected in multi-choice)
+                    default_text = f"Option {idx}"
+                    logger.warning(f" Child node {child_id} of node {node_id} is missing choice_text; using default: {default_text}")
                     f.write(f'<choice target="{child_id}">{default_text}</choice>\n')
             f.write("\n")
     
 
     def _log_performance(self, log_path: str, data: dict):
         """
-        记录表演过程到 JSONL 文件
+        Log performance process to a JSONL file.
         
         Args:
-            log_path: 日志文件路径
-            data: 要记录的数据字典
+            log_path: Log file path
+            data: Data dict to record
         """
         try:
             import json
             from datetime import datetime
             
-            # 添加简洁时间戳（HH:MM:SS格式）
+            # Add concise timestamp (HH:MM:SS)
             data['timestamp'] = datetime.now().strftime("%H:%M:%S")
             
-            # 追加到 jsonl 文件
+            # Append to jsonl file
             with open(log_path, 'a', encoding='utf-8') as f:
                 f.write(json.dumps(data, ensure_ascii=False) + '\n')
         except Exception as e:
-            logger.warning(f"⚠️ 记录表演日志失败: {e}")
+            logger.warning(f" Failed to log performance: {e}")
     
     def _character_mentioned_in(self, char_name: str, text: str) -> bool:
-        """判断角色是否在文本中被提及"""
+        """Check whether a character is mentioned in text."""
         return char_name in text or char_name.lower() in text.lower()

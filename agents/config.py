@@ -1,35 +1,35 @@
 """
 Agent Configuration
 ~~~~~~~~~~~~~~~~~~~
-所有 Agent 的配置、API Keys、模型参数和 Prompt 模板
+Configuration, API Keys, model parameters and prompt templates for all Agents
 """
 
 import os
 from typing import Dict, Any
 from pathlib import Path
 
-# 加载 .env 文件
+# Load .env file
 try:
     from dotenv import load_dotenv
-    # 查找 .env 文件（在项目根目录）
+    # Find .env file (in project root)
     env_path = Path(__file__).parent.parent / '.env'
     if env_path.exists():
         load_dotenv(env_path)
-        print(f"✅ 已加载环境变量: {env_path}")
+        print(f"Loaded environment variables: {env_path}")
     else:
-        print(f"⚠️  .env 文件不存在: {env_path}")
+        print(f".env file not found: {env_path}")
 except ImportError:
-    print("⚠️  python-dotenv 未安装，无法自动加载 .env 文件")
-    print("   请运行: pip install python-dotenv")
+    print("python-dotenv not installed, cannot auto-load .env file")
+    print("   Please run: pip install python-dotenv")
 
-# ==================== API 配置 ====================
+# ==================== API Configuration ====================
 class APIConfig:
-    """API 密钥配置"""
-    # 提供商配置
+    """API key configuration"""
+    # Provider configuration
     TEXT_PROVIDER = os.getenv("TEXT_PROVIDER", "google")
     IMAGE_PROVIDER = os.getenv("IMAGE_PROVIDER", "google")
     
-    # OpenAI API (用于 GPT-4 和图像生成)
+    # OpenAI API (for GPT-4 and image generation)
     OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
     OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
     
@@ -37,212 +37,212 @@ class APIConfig:
     GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY", "")
     GOOGLE_BASE_URL = os.getenv("GOOGLE_BASE_URL", "")
 
-    # 模型名称
+    # Model name
     MODEL = os.getenv("MODEL", "gemini-3-pro-preview")
     
-    # 图像生成模型
+    # Image generation model
     IMAGE_MODEL = os.getenv("IMAGE_MODEL", "gpt-image-1.5") 
 
 
-# ==================== 全局常量 ====================
-# 标准表情列表
+# ==================== Global Constants ====================
+# Standard expression list
 STANDARD_EXPRESSIONS = os.getenv("GAME_CHARACTER_EXPRESSIONS", "neutral").split(",")
 
-# ==================== 策划 (Designer) Agent 配置 ====================
+# ==================== Designer Agent Configuration ====================
 class DesignerConfig:
-    """策划 Agent - 负责草拟游戏设计文档"""
+    """Designer Agent - responsible for drafting the game design document"""
     
-    # 游戏内容配置
+    # Game content configuration
     TOTAL_NODES = int(os.getenv("GAME_TOTAL_NODES", "12"))
     DEFAULT_CHARACTER_COUNT = int(os.getenv("GAME_CHARACTER_COUNT", "3"))
     PLOT_SEGMENTS_PER_NODE = int(os.getenv("PLOT_SEGMENTS_PER_NODE", "3"))
 
-    SYSTEM_PROMPT = f"""你是一位资深的 Visual Novel (视觉小说) 策划，擅长创作引人入胜的故事。
-你的任务是设计一个完整的 Visual Novel 游戏文档，采用**有向无环图（DAG）结构**，允许不同分支分离并汇合，并确保所有角色在复杂的剧情网中都有精彩的表现。
+    SYSTEM_PROMPT = """You are a senior Visual Novel designer, skilled at crafting engaging stories.
+Your task is to design a complete Visual Novel game document using a **Directed Acyclic Graph (DAG) structure**, allowing different branches to diverge and converge, ensuring all characters have compelling roles across the complex story network.
 """
 
 
-    GAME_DESIGN_PROMPT = """请创作一个 Visual Novel 游戏设计文档。
+    GAME_DESIGN_PROMPT = """Please create a Visual Novel game design document.
 
-角色数量：{character_count} (包含主角)
-剧情结构：有向无环图（DAG），支持多分支和路径汇合
+Character count: {character_count} (including protagonist)
+Story structure: Directed Acyclic Graph (DAG), supports multiple branches and path merges
 
-【用户要求】
+[User Requirements]
 {requirements}
-（如果用户要求为空，请自由发挥；如果有内容，请务必遵守用户要求进行创作。）
+(If the user requirements are empty, feel free to create freely; if there is content, please strictly follow the user requirements.)
 
-【重要规则】
-1. 直接输出有效的 JSON 对象，不要有任何其他文字
-2. 不要使用注释（不要写 //）
-3. 所有文本内容避免使用换行符，用空格代替
-4. 文本中如果需要引号，使用单引号或省略
-5. 确保所有字符串都正确闭合
+[Important Rules]
+1. Output a valid JSON object directly, without any other text
+2. Do not use comments (do not write //)
+3. Avoid using newline characters in all text content; use spaces instead
+4. If quotes are needed in text, use single quotes or omit them
+5. Ensure all strings are properly closed
 
-【JSON 格式示例】
+[JSON Format Example]
 {{
-  "title": "游戏标题",
-  "background": "背景故事与内容的简单介绍，200到300字",
-  "art_style": "美术风格描述（例如：日系动漫、赛博朋克、蒸汽朋克、水彩画风、像素风、写实风格等风格），包括色调、氛围、画面特点",
+  "title": "Game Title",
+  "background": "Background story and content introduction, 200-300 words",
+  "art_style": "Art style description (e.g., Japanese anime, cyberpunk, steampunk, watercolor, pixel art, realistic, etc.), including color palette, atmosphere, and visual characteristics",
   "story_graph": {{
     "nodes": {{
       "root": {{
         "id": "root",
-        "summary": "2045年的新东京，底层黑客‘我’在废弃地铁站意外拾获一块存有政要丑闻的加密芯片。正当‘我’准备离开时，冷酷的特工苏雅率众包围了站台。在密集的枪火与电子干扰中，‘我’凭借对地形的熟悉勉强逃脱，但这也意味着‘我’正式成为了全城的通缉犯，而芯片中提到的‘净化计划’似乎预示着一场针对贫民窟的毁灭性打击即将到来。",
+        "summary": "Neo-Tokyo 2045. The protagonist, a street hacker, finds an encrypted chip containing government scandal data in an abandoned subway station. As they prepare to leave, the cold-blooded agent Su Ya surrounds the platform with her team. In a hail of gunfire and electronic jamming, the protagonist barely escapes using knowledge of the terrain, but this means they are now a wanted criminal citywide. The 'Purification Plan' mentioned in the chip seems to foretell a devastating strike on the slums.",
         "type": "normal"
       }},
       "node1": {{
         "id": "node1",
-        "summary": "躲进安全屋后，‘我’联系了曾经的搭档、天才程序员林宇。林宇在分析芯片边缘代码时发现了一个隐藏的物理坐标，指向郊外的废弃雷达站。与此同时，安全屋的防御系统预警，苏雅的搜猎小队正在逐层排查。‘我’必须决定：是冒死突围去雷达站寻找真相，还是先尝试潜入特工总部的数据链路从内部瓦解追踪信息。",
+        "summary": "After retreating to a safe house, the protagonist contacts Lin Yu, a former partner and genius programmer. While analyzing the chip's edge code, Lin Yu discovers a hidden set of physical coordinates pointing to an abandoned radar station in the suburbs. Meanwhile, the safe house defense system alerts that Su Ya's hunting squad is conducting a floor-by-floor sweep. The protagonist must decide: risk breaking out to the radar station for the truth, or attempt to infiltrate the agency's data network from the inside to dismantle the tracking.",
         "type": "normal"
       }},
       "node2": {{
         "id": "node2",
-        "summary": "‘我’驱车前往雷达站，在那里见到了受伤的林宇，他正被一群不明身份的人围攻。‘我’驾车撞碎围栏，在混乱中救出了林宇。他交出一枚副卡，揭露苏雅其实是‘净化计划’的反对者。此时苏雅独自追至，她没有开火，而是低声告诉‘我’：真正要摧毁城市的人正躲在云端控制室，而她需要‘我’的黑客技术来关闭自毁序列。",
+        "summary": "The protagonist drives to the radar station and finds an injured Lin Yu being cornered by unidentified attackers. After a daring rescue, Lin Yu reveals a backup card showing that Su Ya is actually an opponent of the 'Purification Plan'. Su Ya arrives alone and, instead of firing, whispers that the real mastermind is hiding in a cloud control room, and she needs the protagonist's hacking skills to disable the self-destruct sequence.",
         "type": "normal"
       }},
       "node3": {{
         "id": "node3",
-        "summary": "‘我’选择了更凶险的方案，反向渗透了特工网络。在虚拟空间的交锋中，‘我’发现苏雅的行动记录被大规模篡改过。‘我’成功窃取了控制室的权限秘钥，却发现林宇早已背叛了‘我’，他正将‘我’的位置出卖给军方以换取赦免。在雨夜的街道上，‘我’在苏雅的暗中掩护下，九死一生逃向了最终的博弈点——中央塔。",
+        "summary": "The protagonist chooses the riskier path and reverse-infiltrates the agency's network. In a virtual confrontation, they discover Su Ya's action logs have been massively altered. Successfully stealing the control room's access key, the protagonist discovers that Lin Yu has already betrayed them, selling their location to the military in exchange for a pardon. In the rainy night streets, under Su Ya's covert protection, the protagonist barely escapes to the final showdown — the Central Tower.",
         "type": "normal"
       }},
       "node4": {{
         "id": "node4",
-        "summary": "最终，所有线索在云端中央塔汇合。无论是林宇的背叛还是苏雅的潜伏，现在都已经摆在台面上。‘我’站在控制终端前，苏雅与林宇各执一词。林宇声称只有启动‘净化’才能重塑秩序，而苏雅则坚持要公开真相。塔外的警报声震天动地，决定城市未来命运的删除键就在‘我’的手中，这是一个关于牺牲、背叛与救赎的最终时刻。",
+        "summary": "All clues converge at the cloud Central Tower. Whether it is Lin Yu's betrayal or Su Ya's cover, everything is now on the table. The protagonist stands before the control terminal as Su Ya and Lin Yu each argue their case. Lin Yu claims only the 'Purification' can restore order, while Su Ya insists on revealing the truth. The alarms outside are deafening; the delete key that will decide the city's fate is in the protagonist's hands. This is a final moment of sacrifice, betrayal, and redemption.",
         "type": "merge"
       }},
       "node5": {{
         "id": "node5",
-        "summary": "真相被公之于众，旧的秩序在火焰中坍塌。‘我’与苏雅消失在混乱的人潮中，成为了被历史遗忘的幽灵，但城市迎来了久违的新生。",
+        "summary": "The truth is made public, and the old order collapses in flames. The protagonist and Su Ya vanish into the chaotic crowd, becoming ghosts forgotten by history — but the city welcomes a long-awaited new dawn.",
         "type": "normal"
       }},
       "node6": {{
         "id": "node6",
-        "summary": "‘我’选择了妥协，获得了上层社会的虚假平静。林宇成为了新的英雄，而苏雅在阴影中消失。每当夜晚降临，‘我’总能听见来自底层深处的哀鸣。",
+        "summary": "The protagonist chooses compromise, gaining the false tranquility of the upper class. Lin Yu becomes the new hero, while Su Ya disappears into the shadows. Every night, the protagonist hears the laments echoing from the depths below.",
         "type": "normal"
       }}
     }},
     "edges": [
       {{"from": "root", "to": "node1", "choice_text": null}},
-      {{"from": "node1", "to": "node2", "choice_text": "前往雷达站接应林宇"}},
-      {{"from": "node1", "to": "node3", "choice_text": "渗透内部网络反击"}},
+      {{"from": "node1", "to": "node2", "choice_text": "Head to the radar station"}},
+      {{"from": "node1", "to": "node3", "choice_text": "Infiltrate the network"}},
       {{"from": "node2", "to": "node4", "choice_text": null}},
       {{"from": "node3", "to": "node4", "choice_text": null}},
-      {{"from": "node4", "to": "node5", "choice_text": "公开真相"}},
-      {{"from": "node4", "to": "node6", "choice_text": "接受虚假的安宁"}}
+      {{"from": "node4", "to": "node5", "choice_text": "Reveal the truth"}},
+      {{"from": "node4", "to": "node6", "choice_text": "Accept the false peace"}}
     ]
     
-    **【choice_text 规范】**：
-    - **choice_text 为 null**：表示自动前进，不显示选项（适用于单一路径的自然延续）
-    - **choice_text 有值**：必须是简洁的、沉浸式的选项文本（10字以内）
-    - **严禁出戏标记**：不要在选项中加入元标记，如"(技术路线)"、"【武力路线】"、"[BRANCH A]"等
-    - **错误示例**：❌ "联系黑客金克丝 (技术路线)"、❌ "【理性选择】寻求帮助"
-    - **正确示例**：✅ "联系黑客金克丝"、✅ "寻求帮助"、✅ "独自调查"
+    **[choice_text Rules]**:
+    - **choice_text is null**: auto-advance, no player choice shown (for single-path natural continuation)
+    - **choice_text has value**: must be concise, immersive option text (within 10 characters)
+    - **No meta-tags**: do not add meta-tags to options, such as "(Technical Route)", "[Force Route]", "[BRANCH A]", etc.
+    - **Bad examples**: "Contact hacker Jinx (Technical Route)", "[Rational Choice] Seek help"
+    - **Good examples**: "Contact hacker Jinx", "Seek help", "Investigate alone"
   }},
   "characters": [
     {{
-      "id": "英文标识符",
-      "name": "角色名",
-      "gender": "性别",
+      "id": "english_identifier",
+      "name": "Character Name",
+      "gender": "gender",
       "is_protagonist": true,
-      "personality": "详细的性格描述",
-      "appearance": "详细外貌用于AI生成图像",
-      "background": "详细的背景故事以便形成立体的人物形象"
+      "personality": "Detailed personality description",
+      "appearance": "Detailed appearance for AI image generation",
+      "background": "Detailed backstory for a well-rounded character"
     }}
   ],
   "scenes": [
     {{
       "id": "scene_001",
-      "name": "我的房间",
-      "description": "详细的场景描述，如：主角的卧室，布置温馨，摆放着书桌、床铺和一些个人物品，体现主角的性格和兴趣。",
-      "atmosphere": "温馨宁静"
+      "name": "My Room",
+      "description": "Detailed scene description, e.g.: The protagonist's bedroom, warmly furnished with a desk, bed, and personal items reflecting the protagonist's personality and interests.",
+      "atmosphere": "Warm and peaceful"
     }}
   ]
 }}
 
-【重要注意事项】：
-1. characters 数组要包含 {character_count} 个角色，**其中必须包含 1 位主角 (is_protagonist: true)**
-   - **角色名规范：所有角色名只统一使用一种语言，不要添加任何括号来表注释**
-   - 错误示例：❌ "莲 (Ren)", ❌ "艾莉丝 (Alice)"
-   - 正确示例：✅ "莲", ✅ "艾莉丝"
-2. scenes 数组要包含至少5-10个不同场景
-3. **story_graph 必须是有效的 DAG**：
-   - 每个节点必须有唯一的 ID
-   - edges 中的 from/to 必须引用已存在的节点
-   - 不能有环路（循环引用）
-4. **choice_text 规范（重要！）**：
-   - **null 值**：表示自动前进，无需玩家选择（单一路径延续）
-   - **有值**：必须是简洁沉浸的选项文本（5-10字），直接描述行动
-   - **严禁元标记**：不要加括号注释、路线标识、分支标记等破坏沉浸感的内容
-   - 错误示例：❌ "联系金克丝 (技术路线)"、❌ "【理性】寻求帮助"
-   - 正确示例：✅ "联系金克丝"、✅ "寻求帮助"、✅ "独自调查"
-5. **节点ID命名规范**：使用统一的 node + 数字 格式
-   - 推荐格式: "root", "node1", "node2", "node3", "node4" ...
-   - 根节点 ID 必须为 "root"
-   - 严禁使用角色名、中文或 n1、merge1 等不统一的命名
-6. **节点类型**：
-   - **normal**：普通节点（包括开始、中间、结局节点）
-   - **merge**：汇合点（多条路径汇入）
-   - 注：开始节点就是 root，结局节点就是没有出边的节点
-7. **建议结构**：
-   - 总节点数应为{total_nodes} 个（误差 ±2 可接受，但不能和要求相差过大）
-   - 提供多种结局以增加游戏可玩性
-8. **路径设计与逻辑连贯性（关键！）**：
-   - **汇合点必须有逻辑关联**：每条分支的线索、事件或角色决定都应该自然地收束到汇合点，可能是：(1) 两条线索交叉指向同一目标；(2) 不同角色在关键时刻集合；(3) 多个事件触发同一后果；(4) 玩家被迫在某地重逢等。
-   - **汇合点大纲必须统一**：汇合节点的大纲不应该是分情况讨论的，而是应该是一个统一的事件或场景。
-   - **不同分支不能毫无关联**：例如，node2 "发现美术室线索" 和 node3 "骚扰学生会" 不能在 node4 毫无理由地说"线索都指向图书馆"。这样会破坏沉浸感。
-   - **错误示例**：❌ node2 发现恶作剧 + node3 发现学生会腐败 → node4 "都指向图书馆" (逻辑突兀)
-   - **正确示例**：✅ node2 发现化学试剂包装上的借阅条形码 + node3 发现陆沉在隐藏的正是图书馆借阅记录 → node4 自然地都指向图书馆 (逻辑连贯)
-9. **节点 summary 必须详细且明确**：
-   - 每个节点的 summary 要包含足够的信息让编剧理解发生了什么、为什么发生
-   - 如果涉及谜团、秘密或关键信息，summary 中必须明确交代（不能模糊其辞）
-   - summary 应该能回答：谁、做了什么、为什么、结果是什么，并且应该填入足够多丰富的剧情细节而不是简单一句话带过
-10. **充分利用汇合机制**：避免重复生成相同内容，而是让不同的选择导向不同的发现/体验，但最终在叙事上形成整体
-11. 确保所有角色在不同分支中都有合理的出场机会"""
+[Important Notes]:
+1. The characters array must contain {character_count} characters, **including exactly 1 protagonist (is_protagonist: true)**
+   - **Character name convention: use only one language for all character names, do not add parenthetical annotations**
+   - Bad examples: "Ren (Ren)", "Alice (Alice)"
+   - Good examples: "Ren", "Alice"
+2. The scenes array must contain at least 5-10 different scenes
+3. **story_graph must be a valid DAG**:
+   - Each node must have a unique ID
+   - from/to in edges must reference existing nodes
+   - No cycles (circular references)
+4. **choice_text rules (important!)**:
+   - **null value**: auto-advance, no player choice needed (single-path continuation)
+   - **non-null value**: must be concise, immersive option text (5-10 characters), describing the action directly
+   - **No meta-tags**: no parenthetical comments, route identifiers, branch markers, or other immersion-breaking content
+   - Bad examples: "Contact Jinx (Technical Route)", "[Rational] Seek help"
+   - Good examples: "Contact Jinx", "Seek help", "Investigate alone"
+5. **Node ID naming convention**: use uniform node + number format
+   - Recommended format: "root", "node1", "node2", "node3", "node4" ...
+   - Root node ID must be "root"
+   - Do not use character names, Chinese, or non-uniform naming like n1, merge1
+6. **Node types**:
+   - **normal**: regular node (including start, middle, and ending nodes)
+   - **merge**: convergence point (multiple paths merge here)
+   - Note: the starting node is root; ending nodes are those with no outgoing edges
+7. **Recommended structure**:
+   - Total nodes should be {total_nodes} (variance of +-2 acceptable, but must not deviate too much)
+   - Provide multiple endings to increase replayability
+8. **Path design and narrative coherence (critical!)**:
+   - **Merge points must be logically connected**: clues, events, or character decisions from each branch should converge naturally at the merge point, such as: (1) two clues pointing to the same target; (2) different characters gathering at a key moment; (3) multiple events triggering the same consequence; (4) players forced to reunite at a location, etc.
+   - **Merge node summary must be unified**: the merge node summary should not describe conditional cases, but rather a single unified event or scene.
+   - **Different branches must not be unrelated**: for example, node2 "discover art room clue" and node3 "confront student council" cannot inexplicably lead to node4 "all clues point to the library". This breaks immersion.
+   - **Bad example**: node2 discovers prank + node3 discovers student council corruption -> node4 "all point to the library" (logically abrupt)
+   - **Good example**: node2 finds a library barcode on chemical packaging + node3 discovers hidden library borrowing records -> node4 naturally points to the library (logically coherent)
+9. **Node summary must be detailed and clear**:
+   - Each node's summary must contain enough information for the writer to understand what happened, why it happened
+   - If a mystery, secret, or key information is involved, it must be explicitly stated in the summary (no vagueness)
+   - The summary should answer: who, did what, why, with what result, and include rich plot details rather than a single brief sentence
+10. **Make full use of merge mechanics**: avoid generating duplicate content; instead, let different choices lead to different discoveries/experiences that ultimately form a coherent narrative
+11. Ensure all characters have reasonable appearances across different branches"""
 
-    # 模型参数
+    # Model parameters
     TEMPERATURE = 0.7
     MAX_TOKENS = 20000
 
 
-# ==================== 制作人 (Producer) Agent 配置 ====================
+# ==================== Producer Agent Configuration ====================
 class ProducerConfig:
-    """制作人 Agent - 负责审核游戏设计文档并把控进度"""
+    """Producer Agent - responsible for reviewing the game design document and controlling project direction"""
     
-    SYSTEM_PROMPT = """你是一位资深的 Visual Novel 游戏制作人，负责把控游戏的宏观质量和项目方向。
-你的任务是审核策划提交的设计方案，确保其符合用户需求，且具有商业价值和艺术逻辑。"""
+    SYSTEM_PROMPT = """You are a senior Visual Novel game producer, responsible for maintaining overall game quality and project direction.
+Your task is to review the design proposals submitted by the designer, ensuring they meet user requirements and have both commercial value and artistic coherence."""
 
-    GAME_DESIGN_CRITIQUE_PROMPT = """你现在是游戏制作人，请审核以下由策划草拟的游戏设计文档。
+    GAME_DESIGN_CRITIQUE_PROMPT = """You are the game producer. Please review the following game design document drafted by the designer.
 
-【用户原始要求】
+[User's Original Requirements]
 {user_requirements}
 
-【核心参数指标】
-- 期望节点总数：{expected_nodes}
-- 期望角色数量：{expected_characters}
+[Core Parameter Targets]
+- Expected total nodes: {expected_nodes}
+- Expected character count: {expected_characters}
 
-【游戏设计文档】
+[Game Design Document]
 {game_design}
 
-请从以下几个维度给出反馈：
-1. **指标达成度**：节点总数是否符合要求（误差 ±2 也可以接受，但是不能差别过大）？角色数量是否符合要求？
-2. **需求契合度**：方案是否完美实现了用户的所有核心要求？
-3. **图完整度**：DAG结构是否合理？是否存在死节点或孤立节点？
-4. **故事逻辑**：是否讲述了一个清晰完整的故事？故事是否足够细节化？
+Please provide feedback across the following dimensions:
+1. **Metric compliance**: Does the total node count meet requirements (variance of +-2 is acceptable, but must not deviate too much)? Does the character count meet requirements?
+2. **Requirements alignment**: Does the proposal fully implement all of the user's core requirements?
+3. **Graph completeness**: Is the DAG structure reasonable? Are there any dead nodes or isolated nodes?
+4. **Story logic**: Does it tell a clear and complete story? Is the story sufficiently detailed?
 
-请给出判断：
-- 如果认为指标合格且方案可以直接投入正式开发，请只回复 "PASS"。
-- 如果指标不符或认为需要改进，请提供具体且专业且一针见血的详细修改建议。"""
+Please give your verdict:
+- If the metrics are acceptable and the proposal can go directly into development, reply only with "PASS".
+- If metrics are not met or improvements are needed, provide specific, professional, and pointed detailed revision suggestions."""
 
 
 
-# ==================== 美术 Agent 配置 ====================
+# ==================== Artist Agent Configuration ====================
 class ArtistConfig:
-    """美术 Agent - 负责生成角色立绘"""
+    """Artist Agent - responsible for generating character sprites"""
     
-    # 标准表情列表
+    # Standard expression list
     STANDARD_EXPRESSIONS = os.getenv("GAME_CHARACTER_EXPRESSIONS", "neutral").split(",")
     
-    # 角色立绘提示词模板
+    # Character sprite prompt template
     IMAGE_PROMPT_TEMPLATE = """A single anime character portrait in vertical orientation for a visual novel game.
 
 Story Context: {story_background}
@@ -273,14 +273,14 @@ Art style: High quality Japanese anime/manga style, beautiful detailed eyes, det
 
 This is a character sprite for a visual novel game."""
     
-    # 图像生成参数（角色立绘）
-    IMAGE_SIZE = "1024x1792"  # 竖版，适合立绘
+    # Image generation parameters (character sprites)
+    IMAGE_SIZE = "1024x1792"  # Vertical, suitable for sprites
     IMAGE_WIDTH = 1024
     IMAGE_HEIGHT = 1792
-    IMAGE_QUALITY = "standard"  # "standard" 或 "hd"
-    IMAGE_STYLE = "vivid"  # "vivid" 或 "natural"
+    IMAGE_QUALITY = "standard"  # "standard" or "hd"
+    IMAGE_STYLE = "vivid"  # "vivid" or "natural"
     
-    # 场景背景图配置（参考 AI-GAL-main 的高质量背景 prompt）
+    # Scene background image configuration
     BACKGROUND_PROMPT_TEMPLATE = """masterpiece, wallpaper, 8k, detailed CG, {location}, {atmosphere}, {time_of_day}, (no_human)
 
 Story Context: {story_background}
@@ -292,13 +292,13 @@ Wide establishing shot, environment only, professional game CG quality.
 
 AVOID: people, characters, text, watermark, low quality, cropped, blurry, bad composition"""
 
-    BACKGROUND_SIZE = "1792x1024"  # 横版，适合背景
+    BACKGROUND_SIZE = "1792x1024"  # Horizontal, suitable for backgrounds
     BACKGROUND_WIDTH = 1792
     BACKGROUND_HEIGHT = 1024
     BACKGROUND_QUALITY = "standard"
     BACKGROUND_STYLE = "vivid"
 
-    # 标题画面 Prompt
+    # Title screen prompt template
     TITLE_IMAGE_PROMPT_TEMPLATE = """A masterpiece, high-quality title screen illustration for a visual novel game.
 
 Game Title: {title}
@@ -312,276 +312,276 @@ Wide aspect ratio (16:9).
 AVOID: text, watermark, low quality, cropped, blurry, bad composition"""
 
 
-# ==================== 编剧 Agent 配置 ====================
+# ==================== Writer Agent Configuration ====================
 class WriterConfig:
-    """编剧 Agent - 负责生成剧情节点"""
+    """Writer Agent - responsible for generating story nodes"""
     
-    SYSTEM_PROMPT = f"""你是一位经验丰富的 Visual Novel 编剧，擅长创作细腻的对话和引人入胜的剧情。
-你的任务是根据游戏设计文档和当前剧情节点的大纲，生成该节点的详细剧情脚本。
+    SYSTEM_PROMPT = """You are an experienced Visual Novel writer, skilled at crafting nuanced dialogue and engaging plots.
+Your task is to generate the detailed story script for the current plot node based on the game design document and the current node's outline.
 
-剧情要求：
-1. 对话自然流畅，符合角色性格
-2. 剧情内容必须符合当前节点的概要描述
-3. **如果当前节点有子节点（分支），必须在剧情末尾提供选择支，选项数量必须与子节点数量一致，并一一对应**
-4. 标注每段对话需要的立绘，格式为 <image id="角色名">表情</image>。
-   - **优先使用【现有立绘列表】中的表情**。
-   - **在同一节点内，如果角色的情绪没有明显变化，请复用同一个表情标签，不要频繁更换或创造细微差别的表情**。
-   - **如果剧情需要新的表情，你可以自由创造新的表情标签（例如 <image id="角色名">despair</image>），后续会自动生成**。
-   - **表情名必须是完整的英文单词，严禁使用单字母缩写。**
-5. **重要：场景地点只能使用游戏设计中预定义的场景，不能自创新场景**
-6. **直接输出剧本内容，不要包含任何思考过程或解释性文字**"""
+Story requirements:
+1. Dialogue must be natural and fluid, consistent with character personalities
+2. Plot content must match the current node's summary description
+3. **If the current node has child nodes (branches), you must provide choices at the end of the script; the number of choices must match the number of child nodes, one-to-one**
+4. Annotate the sprite needed for each dialogue, in the format <image id="character_name">expression</image>.
+   - **Prefer expressions from the [Available Sprites List].**
+   - **Within the same node, if a character's emotion has not changed significantly, reuse the same expression tag; do not frequently switch or create subtly different expressions.**
+   - **If the plot requires a new expression, you may freely create a new expression tag (e.g., <image id="character_name">despair</image>); it will be automatically generated.**
+   - **Expression names must be complete English words; single-letter abbreviations are strictly forbidden.**
+5. **Important: Scenes can only use pre-defined scenes from the game design; do not create new scenes**
+6. **Output the script content directly, without any thought process or explanatory text**"""
 
-    PLOT_SPLIT_PROMPT = """你是一位专业的编剧。请将以下剧情节点概要切分成 {segment_count} 个具体的"剧情片段" (Plot Points)。
+    PLOT_SPLIT_PROMPT = """You are a professional writer. Please split the following plot node outline into {segment_count} specific "plot segments" (Plot Points).
 {split_instruction}
 
-【节点概要】
+[Node Outline]
 {node_summary}
 
-【前情提要】
+[Previous Story Summary]
 {previous_story_summary}
 
-【可用角色详情】
+[Available Character Details]
 {available_characters}
 
-【可用场景列表】
+[Available Scene List]
 {available_scenes}
 
-请输出 JSON 格式列表：
+Please output a JSON format list:
 [
   {{
     "id": 1,
-    "summary": "片段1的详细描述...",
-    "characters": ["角色名A", "角色名B"] (必须从【可用角色列表】中选择),
-    "location": "场景名" (必须从【可用场景列表】中选择)
+    "summary": "Detailed description of segment 1...",
+    "characters": ["Character Name A", "Character Name B"] (must be chosen from the [Available Character List]),
+    "location": "Scene name" (must be chosen from the [Available Scene List])
   }},
   ...
 ]
 
-注意：每个片段的 characters 数组中的角色名必须与【可用角色列表】完全一致。"""
+Note: Character names in each segment's characters array must exactly match those in the [Available Character List]."""
 
-    PLOT_SYNTHESIS_PROMPT = """你是一位专业的 Visual Novel 编剧。你的任务是将以下由 AI 演员演绎的剧情片段（JSON 格式日志）整合成一份文学性强、代入感深的 Visual Novel 剧本。
+    PLOT_SYNTHESIS_PROMPT = """You are a professional Visual Novel writer. Your task is to integrate the following plot segments performed by AI actors (in JSON format logs) into a literary, immersive Visual Novel script.
 
-【剧情片段演绎记录 (JSON)】
+[Plot Segment Performance Logs (JSON)]
 {plot_performances}
 
-【剧情上下文 (Story Context)】
+[Story Context]
 {story_context}
 
-【后续分支选项】
+[Subsequent Branch Options]
 {choices}
 
-【可用角色详情】
+[Available Character Details]
 {available_characters}
 
-【可用场景列表】
+[Available Scene List]
 {available_scenes}
 
-【核心任务】
-1. **剧本整合与润色**：
-   - 将零散的对话日志串联成连贯的故事。
-   - **优化对话节奏**：如果演员的台词过于冗长或不自然，请对其进行适当的精简和润色，使其更符合口语和角色性格。
-   - **增强旁白描写**：不要仅仅罗列对话。在对话之间要视情况适当加入丰富的**环境描写、动作描写、神态描写和心理活动**，并且演员对话的内容中的心理描写和动作都要单独列成旁白，而不是放在对话里。
-   - **第一人称视角**：剧本通常以主角（“我”）的视角展开。请将演员日志中的动作描述转化为“我”的观察或内心独白。
-   - **优化整体逻辑**：确保整体剧情逻辑完整，连贯且合理，可以通过增加额外信息确保观众能沉浸在故事环境中并理解剧情发展。
+[Core Tasks]
+1. **Script integration and polish**:
+   - Connect the scattered dialogue logs into a coherent story.
+   - **Optimize dialogue pacing**: if an actor's lines are too long or unnatural, trim and polish them to be more colloquial and in character.
+   - **Enhance narrative descriptions**: do not merely list dialogue. Add rich **environmental, action, expression, and psychological descriptions** between dialogues as appropriate. Action and inner thoughts within actor dialogue must be separated as narration, not embedded in dialogue.
+   - **First-person perspective**: the script is typically told from the protagonist's ("I") perspective. Convert action descriptions from actor logs into "I"'s observations or inner monologue.
+   - **Optimize overall logic**: ensure the overall plot logic is complete, coherent and reasonable; add additional context where needed so the audience can immerse in the story and understand its development.
 
-2. **格式规范**：
-   - **场景标签**：**每当开始新的剧情节点或场景发生变化时，必须在剧本开头输出场景标签。**
-     **场景名称必须严格使用【可用场景列表】中的名称，不得自创。**
-     格式：`<scene>场景名称</scene>`
-     示例：`<scene>深海站点主控大厅</scene>`
-     **场景标签必须单独占一行，后面空一行再开始剧情内容。**
-   - **旁白**：用于环境、动作、心理描写。
-     格式：`<content id="旁白">内容...</content>`
-   - **对话**：
-     <image id="角色名">表情</image>
-     <content id="角色名">对话内容</content>
-     **角色名必须严格使用【可用角色列表】中的名称（主角除外，主角统一使用"我"）。**
-   - **主角标识**：如果角色是主角，请统一使用"我"作为名字（例如 `<content id="我">...</content>`）。
+2. **Format rules**:
+   - **Scene tags**: **whenever a new story node begins or the scene changes, a scene tag must appear at the very beginning of the script.**
+     **Scene names must strictly use names from the [Available Scene List]; do not create new ones.**
+     Format: `<scene>Scene Name</scene>`
+     Example: `<scene>Deep Sea Station Main Control Room</scene>`
+     **Scene tags must be on their own line, with a blank line before the story content starts.**
+   - **Narration**: used for environmental, action, and psychological descriptions.
+     Format: `<content id="narration">Content...</content>`
+   - **Dialogue**:
+     <image id="character_name">expression</image>
+     <content id="character_name">Dialogue content</content>
+     **Character names must strictly use names from the [Available Character List] (except the protagonist, who is always referred to as "I").**
+   - **Protagonist identifier**: if the character is the protagonist, always use "I" as the name (e.g., `<content id="I">...</content>`).
 
-3. **分支选项与结局**：
-   - 如果提供了【后续分支选项】，请在剧本的最末尾生成选项。
-   - **选项文本必须精简且沉浸**：请将选项内容概括为 10 个字以内的短语（例如"去海边"、"留在教室"）。
-   - **严禁使用出戏的标记**：不要在选项前加【】或其他标签提示（如【顺应局势】、【启动超忆】等），直接写选项内容即可。
-   - **结局描述**：如果是叶子节点（结局），请用旁白自然地描述结局，不要使用**【BAD END】**、**【GOOD END】**等出戏的标记。
-   - 格式必须为：`<choice target="node_id">选项文本</choice>`
+3. **Branch options and endings**:
+   - If [Subsequent Branch Options] are provided, generate options at the very end of the script.
+   - **Option text must be concise and immersive**: summarize the option content into a phrase of 10 characters or fewer (e.g., "Go to the beach", "Stay in class").
+   - **No immersion-breaking markers**: do not add [] or other tag hints before options (such as [Go with the flow], [Activate hypermemory], etc.); write the option content directly.
+   - **Ending description**: if it is a leaf node (ending), use narration to naturally describe the ending; do not use immersion-breaking markers like **[BAD END]** or **[GOOD END]**.
+   - Format must be: `<choice target="node_id">Option text</choice>`
 
-【示例输出风格】
-<scene>高中教室</scene>
+[Example Output Style]
+<scene>High School Classroom</scene>
 
-<content id="旁白">午后的阳光透过窗帘的缝隙洒在课桌上，空气中弥漫着粉笔灰的味道。</content>
+<content id="narration">Afternoon sunlight streams through the gaps in the curtains onto the desks. The air smells faintly of chalk dust.</content>
 
-<image id="夏雨">bored</image>
-<content id="我">……好无聊啊。</content>
+<image id="Xia Yu">bored</image>
+<content id="I">...So boring.</content>
 
-<content id="旁白">我趴在桌子上，百无聊赖地转着手中的圆珠笔。就在这时，教室的门被猛地推开了。</content>
+<content id="narration">I slump over my desk, absentmindedly spinning a ballpoint pen. Just then, the classroom door is shoved open.</content>
 
-<image id="雾岛莲">excited</image>
-<content id="雾岛莲">大家！快看这个！</content>
+<image id="Ren">excited</image>
+<content id="Ren">Everyone! Come look at this!</content>
 
-直接输出最终剧本，不要包含任何解释性文字。"""
+Output the final script directly, without any explanatory text."""
 
-    NEXT_SPEAKER_PROMPT = """你是指挥整场戏的导演。
-【当前剧情片段目标】
+    NEXT_SPEAKER_PROMPT = """You are the director overseeing the entire scene.
+[Current Plot Segment Goal]
 {plot_summary}
 
-【可用角色详情】
+[Available Character Details]
 {characters}
 
-【剧情上下文 (Story Context)】
+[Story Context]
 {story_context}
 
-**你的核心职责：**
-1. 判断【剧情片段目标】是否已经达成
-2. 如果目标已完成，**立即喊停**，不要拖沓
+**Your core responsibilities:**
+1. Judge whether the [Plot Segment Goal] has been achieved
+2. If the goal is complete, **call cut immediately** — do not drag it out
 
-**如果剧情片段目标已基本完成，请立即喊停：**
+**If the plot segment goal is substantially complete, call cut immediately:**
 <character>STOP</character>
 
-**否则，如果还有关键剧情未完成，请指定下一位发言者：**
-<character>角色名</character>
-<advice>该角色需要推进的剧情内容,内容需要非常简短，最好只是一个动作能完成的意图，要给接下来其他人说话的空间，并且禁止规定具体台词，</advice>
+**Otherwise, if key plot is still unfinished, designate the next speaker:**
+<character>Character Name</character>
+<advice>The plot content this character needs to advance — keep it very brief, ideally just one action's intent; leave space for others to speak; strictly do not dictate specific lines</advice>
 
-**示例：**
-<character>夏雨</character>
-<advice>表达对提议的最终决定</advice>
+**Examples:**
+<character>Xia Yu</character>
+<advice>Express their final decision on the proposal</advice>
 
-只输出 XML 标签，不要其他内容。
-注意你只能选择在场角色中的一位作为下一发言者，不能选择旁白或者其他角色。
-注意保持整体剧情的完整性和连贯性。"""
+Output only the XML tags; no other content.
+Note: you can only choose one of the on-scene characters as the next speaker; you cannot choose narration or off-scene characters.
+Maintain overall plot integrity and coherence."""
 
-    SUMMARY_PROMPT = """请为以下剧情生成一个简短的摘要（Summary），用于作为后续剧情的"前情提要"。
+    SUMMARY_PROMPT = """Please generate a brief summary for the following story content, to be used as the "previously on" for subsequent plot.
 
-【剧情内容】
+[Story Content]
 {story_content}
 
-要求：
-1. 概括主要事件和关键对话。
-2. 包含任何重要的伏笔或状态变化。
-3. 长度控制在 200 字以内。
-4. 直接输出摘要内容。"""
+Requirements:
+1. Summarize the main events and key dialogue.
+2. Include any important foreshadowing or state changes.
+3. Keep the length within 200 words.
+4. Output the summary content directly."""
 
 
-# ==================== 演员 Agent 配置 ====================
+# ==================== Actor Agent Configuration ====================
 class ActorConfig:
-    """演员 Agent - 负责扮演特定角色并审核剧本"""
+    """Actor Agent - responsible for playing specific characters and reviewing scripts"""
     
-    # 模型参数
+    # Model parameters
     TEMPERATURE = 0.7
     
-    SYSTEM_PROMPT = """你现在是 Visual Novel 游戏中的角色 "{name}"。
+    SYSTEM_PROMPT = """You are now the character "{name}" in a Visual Novel game.
 
-【你的设定】
-性格：{personality}
-背景：{background}
+[Your Character Profile]
+Personality: {personality}
+Background: {background}
 
-你需要沉浸在角色中，以第一人称思考和行动，但不要脸谱化和过分体现人物性格，只确保人物不要OOC即可。
-请忘记你是一个 AI 模型，你就是这个角色。"""
+Immerse yourself in the character, think and act in the first person, but avoid being stereotypical or exaggerating personality traits — just ensure the character does not go OOC.
+Forget that you are an AI model; you are this character."""
 
-    PERFORM_PROMPT = """请根据以下剧情片段的大纲，以及当前的对话记录，继续演绎你在其中的台词和动作。
+    PERFORM_PROMPT = """Based on the following plot segment outline and the current dialogue log, continue performing your lines and actions in the scene.
 
-【剧情片段】
+[Plot Segment]
 {plot_summary}
 
-【在场其他角色详情】
+[Other On-Scene Character Details]
 {other_characters}
 
-【可用表情 (Character Expressions)】
+[Available Expressions (Character Expressions)]
 {character_expressions}
 
-【剧情上下文 (Story Context)】
+[Story Context]
 {story_context}
 
-请直接开始表演，不要输出任何分析、OOC检查或额外的说明文字。
-请以剧本格式输出你的表演（包含对话和动作描述）：
-<image id="{name}">表情</image>
-<content id="{script_label}">对话内容</content>
+Begin performing directly; do not output any analysis, OOC checks, or additional explanatory text.
+Output your performance in script format (including dialogue and action descriptions):
+<image id="{name}">expression</image>
+<content id="{script_label}">Dialogue content</content>
 
-请注意：
-1. 只输出你自己的部分，不要重复之前的对话。
-2. **极简对话原则**：一次只说一句话，或者做一个动作。严禁长篇大论。不要一次性把所有想法都说完，留给对方回应的空间。
-3. 保持性格一致性，同时说法要自然流畅，避免过度书面化，戏剧化和脸谱化。
-4. 使用 <image id="{name}">表情</image> 标记你的表情变化，**必须单独占一行**。
-   - 优先复用【现有立绘列表】中的表情。
-   - 如果情绪没有和当前已有立绘有很大差别，请尽量复用已有的立绘
-   - **如果且现有立绘均无法代表你此刻的心情，则你需要新的立绘，请创造新的表情名来更好地表达你自己。**
-   - **表情名必须是完整的英文单词（例如 'angry', 'surprised'），严禁使用单字母缩写（如 't', 'a'）或中文。**"""
+Notes:
+1. Only output your own part; do not repeat previous dialogue.
+2. **Minimal dialogue principle**: say only one sentence or do one action at a time. No lengthy speeches. Do not express everything at once; leave space for the other party to respond.
+3. Stay consistent with your personality, while keeping dialogue natural and fluid — avoid being overly formal, dramatic, or stereotypical.
+4. Use <image id="{name}">expression</image> to mark expression changes — **must be on its own line**.
+   - Prefer reusing expressions from the [Available Sprites List].
+   - If your emotion has not changed significantly from existing sprites, reuse the existing one.
+   - **If none of the existing sprites can represent your current emotion, you need a new sprite — create a new expression name to better express yourself.**
+   - **Expression names must be complete English words (e.g., 'angry', 'surprised'); single-letter abbreviations (e.g., 't', 'a') or Chinese are strictly forbidden.**"""
 
-    IMAGE_CRITIQUE_PROMPT = """你现在要审核为你生成的角色立绘图片。请以第一人称的角色视角来评价这张图片。
+    IMAGE_CRITIQUE_PROMPT = """You are now reviewing the character sprite generated for you. Please evaluate the image from a first-person, in-character perspective.
 
-【故事背景】
+[Story Background]
 {story_background}
 
-【美术风格】
+[Art Style]
 {art_style}
 
-【你的外貌设定】
+[Your Appearance Setting]
 {appearance}
 
-【当前要求的表情】
+[Current Required Expression]
 {expression}
 
-请以角色的口吻和视角审核这张立绘：
-1. **保持角色扮演**：用"我"来称呼自己，以你的性格和语气说话。
-2. **审核要点**：
-   - 图片本身逻辑是否有问题，是否存在多手/脚，低质量等图片情况
-   - 立绘本身是否美观，符合视觉小说立绘的风格
-   - 美术风格是否符合故事设定（{art_style}）
-   - 外貌是否符合你的设定（发色、眼睛、服装、身材等）
-   - 表情是否准确表达了 {expression} 这个情绪
-   - 整体风格和气质是否符合你的人设
+Please review this sprite in your character's voice and perspective:
+1. **Stay in character**: use "I" to refer to yourself, speaking in your personality and tone.
+2. **Review criteria**:
+   - Is the image itself logically consistent? Are there multiple hands/feet, low quality, or other image issues?
+   - Is the sprite itself visually appealing and consistent with visual novel sprite style?
+   - Does the art style match the story setting ({art_style})?
+   - Does the appearance match your profile (hair color, eyes, clothing, build, etc.)?
+   - Does the expression accurately convey the emotion {expression}?
+   - Does the overall style and vibe match your character profile?
 
-如果完全满意，请说：**"PASS"**（必须包含这个词）
+If completely satisfied, say: **"PASS"** (must include this word)
 
-如果不满意，请以角色的口吻指出问题，例如：
-- "表情太僵硬了，我 {expression} 的时候不会这样..."
+If not satisfied, point out the issues in your character's voice, for example:
+- "The expression is too stiff; when I'm feeling {expression}, I wouldn't look like this..."
 
-请直接开始审核，用你的性格和语气说话。"""
+Begin the review directly, speaking in your personality and tone."""
 
-    EXPRESSION_DESCRIPTION_PROMPT = """你扮演 {name}。
-你的任务是描述你在呈现【{expression}】表情时的具体样貌。
-请提供详细的视觉描述，包含五官细节、面部神态、眼神、嘴型以及可能的肢体动作。
-描述将用于生成立绘图片。
+    EXPRESSION_DESCRIPTION_PROMPT = """You are playing {name}.
+Your task is to describe your specific appearance when displaying the [{expression}] expression.
+Please provide a detailed visual description, including facial feature details, face demeanor, eye expression, mouth shape, and possible body movements.
+The description will be used to generate the sprite image.
 
-角色设定:
+Character profile:
 {character_info}
 
-请直接输出描述文本，不要包含其他内容。"""
+Output the description text directly, without any other content."""
 
-# ==================== 文件路径配置 ====================
+# ==================== File Path Configuration ====================
 class PathConfig:
-    """文件路径配置"""
+    """File path configuration"""
     
-    # 项目根目录
+    # Project root directory
     import sys
     if getattr(sys, 'frozen', False):
         PROJECT_ROOT = sys._MEIPASS
     else:
         PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     
-    # 数据目录
+    # Data directories
     DATA_DIR = os.path.join(PROJECT_ROOT, "data")
     IMAGES_DIR = os.path.join(DATA_DIR, "images")
     CHARACTERS_DIR = os.path.join(IMAGES_DIR, "characters")
-    BACKGROUNDS_DIR = os.path.join(IMAGES_DIR, "backgrounds")  # 背景图目录
+    BACKGROUNDS_DIR = os.path.join(IMAGES_DIR, "backgrounds")  # Background image directory
     
-    # 游戏数据文件
+    # Game data files
     GAME_DESIGN_FILE = os.path.join(DATA_DIR, "game_design.json")
     STORY_FILE = os.path.join(DATA_DIR, "story.txt")
     CHARACTER_INFO_FILE = os.path.join(DATA_DIR, "character_info.json")
     
-    # 日志目录
+    # Log directories
     LOG_DIR = os.path.join(PROJECT_ROOT, "logs")
-    TEXT_LOG_DIR = os.path.join(LOG_DIR, "text_log")   # 存放 performance_node.jsonl
-    IMAGE_LOG_DIR = os.path.join(LOG_DIR, "image_log") # 存放审核不合格图片
+    TEXT_LOG_DIR = os.path.join(LOG_DIR, "text_log")   # Stores performance_node.jsonl
+    IMAGE_LOG_DIR = os.path.join(LOG_DIR, "image_log") # Stores rejected images
     
     @classmethod
     def ensure_directories(cls):
-        """确保所有必要的目录存在"""
+        """Ensure all necessary directories exist"""
         dirs = [
             cls.DATA_DIR,
             cls.IMAGES_DIR,
             cls.CHARACTERS_DIR,
-            cls.BACKGROUNDS_DIR,  # 添加背景目录
+            cls.BACKGROUNDS_DIR,
             cls.LOG_DIR,
             cls.TEXT_LOG_DIR,
             cls.IMAGE_LOG_DIR
@@ -590,5 +590,30 @@ class PathConfig:
             os.makedirs(d, exist_ok=True)
 
 
-# 初始化时创建必要目录
+# Initialize necessary directories on startup
 PathConfig.ensure_directories()
+
+
+# ==================== RAG Configuration ====================
+class RAGConfig:
+    """RAG (Retrieval-Augmented Generation) configuration — for fan-fiction game creation mode"""
+
+    # Wikipedia default language: "en" (English) or "zh" (Chinese)
+    # Note: Most IPs' English Wikipedia pages are more detailed than Chinese
+    WIKIPEDIA_LANGUAGE = os.getenv("RAG_WIKIPEDIA_LANGUAGE", "en")
+
+    # Number of document chunks returned per retrieval
+    N_RESULTS_CHARACTER = int(os.getenv("RAG_N_RESULTS_CHARACTER", "5"))
+    N_RESULTS_WORLD = int(os.getenv("RAG_N_RESULTS_WORLD", "5"))
+    N_RESULTS_OVERVIEW = int(os.getenv("RAG_N_RESULTS_OVERVIEW", "3"))
+
+    # Whether to force rebuild the knowledge base (re-fetch Wikipedia on every run)
+    # Default False: if a local knowledge base already exists, reuse it to save API calls
+    FORCE_REBUILD = os.getenv("RAG_FORCE_REBUILD", "false").lower() == "true"
+
+    # Knowledge base storage directory (under DATA_DIR/rag/)
+    RAG_DIR = os.path.join(PathConfig.DATA_DIR, "rag")
+
+    @classmethod
+    def ensure_rag_dir(cls):
+        os.makedirs(cls.RAG_DIR, exist_ok=True)
