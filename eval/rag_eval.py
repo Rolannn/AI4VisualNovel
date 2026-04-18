@@ -125,6 +125,7 @@ def recall_at_k(
     k: int = 3,
     franchise_filter: str = "",
     corpus_text: str = "",
+    use_hybrid: bool = True,
 ) -> Tuple[float, int, int, List[str], List[str], List[str]]:
     """
     Compute recall@k for a single query.
@@ -132,7 +133,8 @@ def recall_at_k(
     Returns:
         (recall, hits, total, hit_keywords, retrieval_misses, corpus_gaps)
     """
-    results = kb.search(query, n_results=k, franchise_filter=franchise_filter)
+    results = kb.search(query, n_results=k, franchise_filter=franchise_filter,
+                        use_hybrid=use_hybrid)
     retrieved_text = " ".join(r["text"] for r in results).lower()
 
     hit_kw: List[str] = []
@@ -157,6 +159,34 @@ def recall_at_k(
 # Main evaluation routine
 # ============================================================
 
+def _eval_one_mode(
+    kb: KnowledgeBuilder,
+    k_values: List[int],
+    franchise: str,
+    corpus_text: str,
+    use_hybrid: bool,
+) -> Dict[int, Tuple[float, int]]:
+    """
+    Run recall evaluation for all queries at each k.
+    Returns {k: (avg_recall, perfect_count)}.
+    """
+    results: Dict[int, Tuple[float, int]] = {}
+    for k in k_values:
+        recalls = []
+        for query, expected in GROUND_TRUTH.items():
+            r, _, _, _, _, _ = recall_at_k(
+                kb, query, expected, k=k,
+                franchise_filter=franchise,
+                corpus_text=corpus_text,
+                use_hybrid=use_hybrid,
+            )
+            recalls.append(r)
+        avg = sum(recalls) / len(recalls) if recalls else 0.0
+        perfect = sum(1 for r in recalls if r == 1.0)
+        results[k] = (avg, perfect)
+    return results
+
+
 def run_eval(kb_path: str, k_values: List[int] = None, franchise: str = "Chainsaw Man"):
     if k_values is None:
         k_values = [1, 3, 5]
@@ -165,14 +195,16 @@ def run_eval(kb_path: str, k_values: List[int] = None, franchise: str = "Chainsa
     kb = KnowledgeBuilder(store_path=kb_path)
     doc_count = kb.get_document_count()
     corpus_text = " ".join(d["text"] for d in kb.store.documents).lower()
+    embed_available = kb.store._embed_idx.available
 
     print("=" * 72)
-    print("  RAG Retrieval Quality Evaluation  (v2 — strict incremental GT)")
+    print("  RAG Retrieval Quality Evaluation  (v3 — Hybrid BM25 + Embedding)")
     print("=" * 72)
-    print(f"  Knowledge base : {kb_path}")
-    print(f"  Total documents: {doc_count}")
-    print(f"  Queries        : {len(GROUND_TRUTH)}")
-    print(f"  K values       : {k_values}")
+    print(f"  Knowledge base   : {kb_path}")
+    print(f"  Total documents  : {doc_count}")
+    print(f"  Embedding index  : {'✓ loaded (%d vectors)' % len(kb.store._embed_idx._ids) if embed_available else '✗ not available (BM25-only)'}")
+    print(f"  Queries          : {len(GROUND_TRUTH)}")
+    print(f"  K values         : {k_values}")
     print("=" * 72)
 
     # ── Corpus audit ──
@@ -186,10 +218,10 @@ def run_eval(kb_path: str, k_values: List[int] = None, franchise: str = "Chainsa
     else:
         print("  All ground-truth keywords verified present in corpus.")
 
-    # ── Per-k results ──
+    # ── Detailed per-query results (Hybrid) ──
     for k in k_values:
         print(f"\n{'─' * 72}")
-        print(f"  Recall@{k}")
+        print(f"  Recall@{k}  [Hybrid: BM25 + Embedding → RRF → rerank]")
         print(f"{'─' * 72}")
 
         recalls = []
@@ -200,6 +232,7 @@ def run_eval(kb_path: str, k_values: List[int] = None, franchise: str = "Chainsa
             recall, hits, total, hit_kw, ret_miss, corp_gap = recall_at_k(
                 kb, query, expected, k=k,
                 franchise_filter=franchise, corpus_text=corpus_text,
+                use_hybrid=True,
             )
             recalls.append(recall)
             total_retrieval_misses += len(ret_miss)
@@ -218,30 +251,40 @@ def run_eval(kb_path: str, k_values: List[int] = None, franchise: str = "Chainsa
               f"({perfect}/{len(recalls)} queries fully recalled)")
         print(f"     Retrieval misses: {total_retrieval_misses}  |  Corpus gaps: {total_corpus_gaps}")
 
-    # ── Summary table ──
+    # ── Summary comparison table ──
     print(f"\n{'=' * 72}")
-    print("  Summary")
+    print("  Summary: BM25-only  vs  Hybrid (BM25 + Embedding → RRF → rerank)")
     print(f"{'=' * 72}")
-    header = "  {:>12s}" + " | {:>10s}" * len(k_values)
-    print(header.format("Metric", *[f"Recall@{k}" for k in k_values]))
-    print("  " + "-" * (14 + 13 * len(k_values)))
 
-    avg_row = []
-    perfect_row = []
+    bm25_results = _eval_one_mode(kb, k_values, franchise, corpus_text, use_hybrid=False)
+    hybrid_results = _eval_one_mode(kb, k_values, franchise, corpus_text, use_hybrid=True)
+
+    n = len(GROUND_TRUTH)
+    col_w = 12
+    header = "  {:>12s}" + (" | {:>%ds}" % col_w) * (len(k_values) * 2)
+    k_headers = []
     for k in k_values:
-        recalls = []
-        for query, expected in GROUND_TRUTH.items():
-            r, _, _, _, _, _ = recall_at_k(
-                kb, query, expected, k=k,
-                franchise_filter=franchise, corpus_text=corpus_text,
-            )
-            recalls.append(r)
-        avg_row.append(sum(recalls) / len(recalls))
-        perfect_row.append(sum(1 for r in recalls if r == 1.0))
+        k_headers += [f"BM25@{k}", f"Hybrid@{k}"]
+    print(header.format("Metric", *k_headers))
+    print("  " + "-" * (14 + (col_w + 3) * len(k_values) * 2))
 
-    data_fmt = "  {:>12s}" + " | {:>10s}" * len(k_values)
-    print(data_fmt.format("Avg Recall", *[f"{v:.4f}" for v in avg_row]))
-    print(data_fmt.format("Full Recall", *[f"{v}/{len(GROUND_TRUTH)}" for v in perfect_row]))
+    avg_vals = []
+    prf_vals = []
+    for k in k_values:
+        avg_vals += [f"{bm25_results[k][0]:.4f}", f"{hybrid_results[k][0]:.4f}"]
+        prf_vals += [f"{bm25_results[k][1]}/{n}", f"{hybrid_results[k][1]}/{n}"]
+
+    data_fmt = "  {:>12s}" + (" | {:>%ds}" % col_w) * (len(k_values) * 2)
+    print(data_fmt.format("Avg Recall", *avg_vals))
+    print(data_fmt.format("Full Recall", *prf_vals))
+
+    # Delta row
+    delta_vals = []
+    for k in k_values:
+        d_avg = hybrid_results[k][0] - bm25_results[k][0]
+        d_prf = hybrid_results[k][1] - bm25_results[k][1]
+        delta_vals += ["", f"{d_avg:+.4f} ({d_prf:+d})"]
+    print(data_fmt.format("Delta", *delta_vals))
     print(f"{'=' * 72}")
 
 

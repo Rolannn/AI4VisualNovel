@@ -23,6 +23,192 @@ logger = logging.getLogger(__name__)
 
 
 # ─────────────────────────────────────────────
+# 0. EmbeddingIndex  (dense retrieval)
+# ─────────────────────────────────────────────
+
+class EmbeddingIndex:
+    """
+    Dense embedding index backed by a .npz file.
+
+    Supports OpenAI embeddings (default: text-embedding-3-large → 3072-dim).
+    Query embeddings are fetched on-the-fly; document embeddings are pre-computed
+    and loaded from disk.  Degrades gracefully to a no-op when the OpenAI client
+    or the .npz file is unavailable, so BM25-only mode is never broken.
+    """
+
+    # Provider priority: Google Gemini → OpenAI
+    # gemini-embedding-001 → 3072-dim (matches pre-built .npz files in this project)
+    _GOOGLE_MODEL = "gemini-embedding-001"
+    _OPENAI_MODEL = "text-embedding-3-large"
+
+    def __init__(self, npz_path: str):
+        self.npz_path = npz_path
+        self._ids: List[str] = []
+        self._vecs: Optional[np.ndarray] = None   # (N, dim) float32
+        self._id_to_idx: Dict[str, int] = {}
+        self._google_client = None   # google.genai.Client
+        self._openai_client = None   # openai.OpenAI
+        self._load()
+        self._init_clients()
+
+    # ── Init / persistence ───────────────────────────────
+
+    def _init_clients(self):
+        """Try Google Gemini first (preferred), then fall back to OpenAI."""
+        # ── Google Gemini ─────────────────────────────────
+        try:
+            import google.genai as genai
+            gkey = os.getenv("GOOGLE_API_KEY", "")
+            if gkey and "your" not in gkey.lower():
+                self._google_client = genai.Client(api_key=gkey)
+                logger.info(f"   EmbeddingIndex: Google Gemini client ready ({self._GOOGLE_MODEL}).")
+                return  # Gemini available → no need for OpenAI
+            else:
+                logger.debug("   EmbeddingIndex: GOOGLE_API_KEY not set; trying OpenAI.")
+        except ImportError:
+            logger.debug("   EmbeddingIndex: google-genai not installed; trying OpenAI.")
+
+        # ── OpenAI (fallback) ─────────────────────────────
+        try:
+            from openai import OpenAI
+            okey = os.getenv("OPENAI_API_KEY", "")
+            if not okey or "your" in okey.lower():
+                logger.debug("   EmbeddingIndex: OPENAI_API_KEY not set; embedding disabled.")
+                return
+            base_url = os.getenv("OPENAI_BASE_URL", "").strip()
+            if not base_url.startswith(("http://", "https://")):
+                if base_url:
+                    logger.info(
+                        f"   EmbeddingIndex: OPENAI_BASE_URL={base_url!r} invalid; "
+                        "using https://api.openai.com/v1."
+                    )
+                base_url = "https://api.openai.com/v1"
+            self._openai_client = OpenAI(api_key=okey, base_url=base_url)
+            logger.info(f"   EmbeddingIndex: OpenAI client ready ({self._OPENAI_MODEL}).")
+        except ImportError:
+            logger.debug("   EmbeddingIndex: openai not installed; embedding disabled.")
+
+    def _load(self):
+        if not os.path.exists(self.npz_path):
+            return
+        try:
+            d = np.load(self.npz_path, allow_pickle=True)
+            self._ids = [str(x) for x in d["ids"]]
+            self._vecs = d["vecs"].astype(np.float32)
+            self._id_to_idx = {id_: i for i, id_ in enumerate(self._ids)}
+            logger.info(
+                f"   EmbeddingIndex: {len(self._ids)} vectors "
+                f"(dim={self._vecs.shape[1]}) loaded from {self.npz_path}"
+            )
+        except Exception as e:
+            logger.warning(f"   EmbeddingIndex: failed to load {self.npz_path}: {e}")
+
+    def _save(self):
+        if self._vecs is None or not self._ids:
+            return
+        try:
+            os.makedirs(os.path.dirname(self.npz_path) or ".", exist_ok=True)
+            np.savez(self.npz_path, ids=np.array(self._ids), vecs=self._vecs)
+        except Exception as e:
+            logger.warning(f"   EmbeddingIndex: save failed: {e}")
+
+    # ── Status ───────────────────────────────────────────
+
+    @property
+    def available(self) -> bool:
+        """True when we have pre-computed document vectors AND can embed queries."""
+        can_query = self._google_client is not None or self._openai_client is not None
+        return can_query and self._vecs is not None and len(self._ids) > 0
+
+    # ── Embedding ────────────────────────────────────────
+
+    def embed_text(self, text: str) -> Optional[np.ndarray]:
+        """Embed text and return a float32 unit vector (Google Gemini → OpenAI fallback)."""
+        vec = None
+
+        if self._google_client is not None:
+            try:
+                result = self._google_client.models.embed_content(
+                    model=self._GOOGLE_MODEL,
+                    contents=text[:8000],
+                )
+                vec = np.array(result.embeddings[0].values, dtype=np.float32)
+            except Exception as e:
+                logger.debug(f"   EmbeddingIndex: Google embed error: {e}")
+
+        if vec is None and self._openai_client is not None:
+            try:
+                resp = self._openai_client.embeddings.create(
+                    model=self._OPENAI_MODEL,
+                    input=text[:8000],
+                )
+                vec = np.array(resp.data[0].embedding, dtype=np.float32)
+            except Exception as e:
+                logger.debug(f"   EmbeddingIndex: OpenAI embed error: {e}")
+
+        if vec is None:
+            return None
+        norm = np.linalg.norm(vec)
+        return vec / norm if norm > 0 else vec
+
+    # ── Bulk index build ─────────────────────────────────
+
+    def add_documents(self, docs: List[Dict]):
+        """Incrementally embed and store docs that are not yet indexed."""
+        if self._google_client is None and self._openai_client is None:
+            return
+        new_docs = [d for d in docs if d["id"] not in self._id_to_idx]
+        if not new_docs:
+            return
+        logger.info(f"   EmbeddingIndex: embedding {len(new_docs)} new documents …")
+        new_vecs: List[np.ndarray] = []
+        for doc in new_docs:
+            vec = self.embed_text(doc["text"])
+            if vec is not None:
+                self._id_to_idx[doc["id"]] = len(self._ids)
+                self._ids.append(doc["id"])
+                new_vecs.append(vec)
+        if new_vecs:
+            mat = np.stack(new_vecs)
+            self._vecs = mat if self._vecs is None else np.vstack([self._vecs, mat])
+            self._save()
+            logger.info(f"   EmbeddingIndex: {len(self._ids)} total vectors.")
+
+    # ── Search ────────────────────────────────────────────
+
+    def search(
+        self,
+        query: str,
+        pool: List[Dict],
+        n_results: int,
+    ) -> List[tuple]:
+        """
+        Return up to n_results (cosine_score, doc) pairs from pool,
+        ranked by cosine similarity to the query embedding.
+        Returns [] when embedding is unavailable.
+        """
+        if not self.available:
+            return []
+        q_unit = self.embed_text(query)
+        if q_unit is None:
+            return []
+
+        results = []
+        for doc in pool:
+            idx = self._id_to_idx.get(doc["id"])
+            if idx is None:
+                continue
+            d_vec = self._vecs[idx]
+            d_norm = np.linalg.norm(d_vec)
+            if d_norm == 0:
+                continue
+            score = float(np.dot(q_unit, d_vec / d_norm))
+            results.append((score, doc))
+        results.sort(key=lambda x: x[0], reverse=True)
+        return results[:n_results]
+
+
+# ─────────────────────────────────────────────
 # Section filters
 # ─────────────────────────────────────────────
 
@@ -173,22 +359,34 @@ class WikipediaFetcher:
 
 class SimpleVectorStore:
     """
-    Lightweight document store + two-stage retrieval.
+    Lightweight document store + three-stage hybrid retrieval.
 
-    Stage 1 – BM25 recall      : fast keyword matching, top-N candidates.
-                                  Uses precomputed global DF (O(1) lookup).
-    Stage 2 – TF-IDF cosine    : re-scores candidates using GLOBAL IDF
-                                  (from full corpus, not just candidates).
+    Stage 1A – BM25 recall       : fast keyword matching, top bm25_candidates.
+                                    Uses precomputed global DF (O(1) lookup).
+    Stage 1B – Embedding recall  : cosine similarity over pre-computed dense
+                                    vectors (OpenAI text-embedding-3-large).
+                                    Graceful no-op when .npz / API unavailable.
+    Stage 1C – RRF fusion        : Reciprocal Rank Fusion merges BM25 and
+                                    embedding ranked lists into one candidate set.
+    Stage 2  – TF-IDF cosine     : re-ranks merged candidates using GLOBAL IDF
+                                    (from full corpus, not just candidates).
 
     Documents are persisted as a JSON file.
+    Embeddings are persisted as a sibling .npz file (auto-derived from store_path).
     """
 
-    def __init__(self, store_path: str):
+    def __init__(self, store_path: str, embed_path: str = ""):
         self.store_path = store_path
         self.documents: List[Dict] = []
         # Fix 3: global DF cache + real avg doc length
         self._df: Counter = Counter()       # token → document frequency
         self._avg_doc_len: float = 150.0    # updated on each add
+
+        # Derive embedding index path from store path
+        if not embed_path:
+            embed_path = store_path.replace(".json", "_embeddings.npz")
+        self._embed_idx = EmbeddingIndex(embed_path)
+
         self._load()
         self._rebuild_index()  # recompute cache after load
 
@@ -336,6 +534,63 @@ class SimpleVectorStore:
             logger.debug(f"Rerank failed, using BM25 order: {e}")
             return candidates[:n_results]
 
+    # ── Stage 2b: Embedding cosine rerank (semantic) ─────
+
+    def _embedding_rerank(
+        self,
+        query: str,
+        candidates: List[Dict],
+        n_results: int,
+    ) -> List[Dict]:
+        """
+        Re-rank candidates by cosine similarity between query embedding and
+        pre-computed document embeddings.  Semantic reranking captures meaning
+        shifts that TF-IDF cosine misses (e.g. query word ≠ doc word but same concept).
+        Falls back to TF-IDF rerank when embedding is unavailable.
+        """
+        if not self._embed_idx.available:
+            return self._tfidf_cosine_rerank(query, candidates, n_results)
+
+        pairs = self._embed_idx.search(query, candidates, len(candidates))
+        if not pairs:
+            return self._tfidf_cosine_rerank(query, candidates, n_results)
+
+        # pairs is already (score, doc) sorted desc; docs not in index fall through
+        ranked = [doc for _, doc in pairs]
+        # append any candidates that had no embedding (preserve order)
+        ranked_ids = {doc["id"] for doc in ranked}
+        for doc in candidates:
+            if doc["id"] not in ranked_ids:
+                ranked.append(doc)
+        return ranked[:n_results]
+
+    # ── Stage 1C: RRF fusion ──────────────────────────────
+
+    @staticmethod
+    def _rrf_merge(
+        bm25_ranked: List[Dict],
+        embed_ranked: List[Dict],
+        k: int = 60,
+    ) -> List[Dict]:
+        """
+        Reciprocal Rank Fusion of two ranked lists.
+        score_rrf(d) = Σ_i  1 / (k + rank_i(d))
+        Docs absent from a list contribute 0 from that list.
+        """
+        scores: Dict[str, float] = {}
+        doc_map: Dict[str, Dict] = {}
+
+        for rank, doc in enumerate(bm25_ranked, start=1):
+            scores[doc["id"]] = scores.get(doc["id"], 0.0) + 1.0 / (k + rank)
+            doc_map[doc["id"]] = doc
+
+        for rank, doc in enumerate(embed_ranked, start=1):
+            scores[doc["id"]] = scores.get(doc["id"], 0.0) + 1.0 / (k + rank)
+            doc_map[doc["id"]] = doc
+
+        merged = sorted(scores.items(), key=lambda x: x[1], reverse=True)
+        return [doc_map[doc_id] for doc_id, _ in merged]
+
     # ── Public search ─────────────────────────────────────
 
     def search(
@@ -343,13 +598,17 @@ class SimpleVectorStore:
         query: str,
         n_results: int = 5,
         bm25_candidates: int = 30,
+        embed_candidates: int = 20,
         franchise_filter: str = "",
         entity_filter: str = "",
+        use_hybrid: bool = True,
     ) -> List[Dict]:
         """
-        Two-stage retrieval:
+        Hybrid three-stage retrieval:
           1. Metadata pre-filter (franchise / entity)
-          2. BM25 recall (top bm25_candidates)
+          2. BM25 recall (top bm25_candidates) + Embedding recall (top embed_candidates)
+             → RRF fusion into one merged candidate set
+             (falls back to BM25-only when embedding index is unavailable)
           3. TF-IDF cosine rerank with global IDF (top n_results)
         """
         if not self.documents:
@@ -379,20 +638,32 @@ class SimpleVectorStore:
         if not query_tokens:
             return pool[:n_results]
 
-        # Stage 1: BM25
+        # Stage 1A: BM25 recall
         scored = [
             (self._bm25_score(query_tokens, doc["text"]), doc)
             for doc in pool
         ]
         scored.sort(key=lambda x: x[0], reverse=True)
-        candidates = [doc for score, doc in scored[:bm25_candidates] if score > 0]
+        bm25_top = [doc for score, doc in scored[:bm25_candidates] if score > 0]
+
+        # Stage 1B+C: Embedding recall + RRF fusion
+        if use_hybrid and self._embed_idx.available:
+            embed_pairs = self._embed_idx.search(query, pool, embed_candidates)
+            embed_top = [doc for _, doc in embed_pairs]
+            candidates = self._rrf_merge(bm25_top, embed_top) if embed_top else bm25_top
+        else:
+            candidates = bm25_top
 
         if not candidates:
             return []
         if len(candidates) <= n_results:
             return candidates
 
-        # Stage 2: global-IDF cosine rerank
+        # Stage 2: rerank
+        #   - Hybrid mode  → Embedding cosine rerank (semantic)
+        #   - BM25-only    → TF-IDF cosine rerank (lexical, original behaviour)
+        if use_hybrid and self._embed_idx.available:
+            return self._embedding_rerank(query, candidates, n_results)
         return self._tfidf_cosine_rerank(query, candidates, n_results)
 
 
@@ -725,11 +996,16 @@ class KnowledgeBuilder:
         n_results: int = 5,
         franchise_filter: str = "",
         entity_filter: str = "",
+        use_hybrid: bool = True,
     ) -> List[Dict]:
-        """BM25 recall + global-IDF cosine rerank with optional metadata filters."""
+        """
+        Hybrid retrieval: BM25 recall + Embedding recall → RRF → TF-IDF cosine rerank.
+        Set use_hybrid=False to fall back to BM25-only (for ablation / comparison).
+        """
         return self.store.search(
             query,
             n_results=n_results,
             franchise_filter=franchise_filter,
             entity_filter=entity_filter,
+            use_hybrid=use_hybrid,
         )
