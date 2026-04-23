@@ -60,7 +60,8 @@ class DesignerConfig:
 
     SYSTEM_PROMPT = """You are a senior Visual Novel designer, skilled at crafting engaging stories.
 Your task is to design a complete Visual Novel game document using a **Directed Acyclic Graph (DAG) structure**, allowing different branches to diverge and converge, ensuring all characters have compelling roles across the complex story network.
-"""
+
+**Language:** All user-facing text in the JSON (title, background, node summaries, choice_text, character names, bios, scene names and descriptions) must be in **English** only. Do not use Chinese or other languages for in-game content."""
 
 
     GAME_DESIGN_PROMPT = """Please create a Visual Novel game design document.
@@ -68,9 +69,12 @@ Your task is to design a complete Visual Novel game document using a **Directed 
 Character count: {character_count} (including protagonist)
 Story structure: Directed Acyclic Graph (DAG), supports multiple branches and path merges
 
+[Language]
+All creative text in the output JSON must be in **English** (dialogue will be generated from your summaries; write summaries and labels in clear English).
+
 [User Requirements]
 {requirements}
-(If the user requirements are empty, feel free to create freely; if there is content, please strictly follow the user requirements.)
+(If the user requirements are empty, create freely. If the user provided requirements, follow them strictly. User text may be in any language, but your JSON content must still be in English as specified above.)
 
 [Important Rules]
 1. Output a valid JSON object directly, without any other text
@@ -210,7 +214,8 @@ class ProducerConfig:
     """Producer Agent - responsible for reviewing the game design document and controlling project direction"""
     
     SYSTEM_PROMPT = """You are a senior Visual Novel game producer, responsible for maintaining overall game quality and project direction.
-Your task is to review the design proposals submitted by the designer, ensuring they meet user requirements and have both commercial value and artistic coherence."""
+Your task is to review the design proposals submitted by the designer, ensuring they meet user requirements and have both commercial value and artistic coherence.
+Assume all in-game text in the design will be shown to English-speaking players: flag any large non-English user-facing fields as an issue (except proper nouns or brief quotes where appropriate)."""
 
     GAME_DESIGN_CRITIQUE_PROMPT = """You are the game producer. Please review the following game design document drafted by the designer.
 
@@ -320,6 +325,8 @@ class WriterConfig:
     SYSTEM_PROMPT = """You are an experienced Visual Novel writer, skilled at crafting nuanced dialogue and engaging plots.
 Your task is to generate the detailed story script for the current plot node based on the game design document and the current node's outline.
 
+**Language:** The entire script (narration, dialogue, choice labels) must be written in **English** only. Use `<content id="I">` for the protagonist and `<content id="narration">` for narration (not Chinese labels).
+
 Story requirements:
 1. Dialogue must be natural and fluid, consistent with character personalities
 2. Plot content must match the current node's summary description
@@ -333,6 +340,8 @@ Story requirements:
 6. **Output the script content directly, without any thought process or explanatory text**"""
 
     PLOT_SPLIT_PROMPT = """You are a professional writer. Please split the following plot node outline into {segment_count} specific "plot segments" (Plot Points).
+**Write all output fields (summaries, location names) in English.**
+
 {split_instruction}
 
 [Node Outline]
@@ -360,7 +369,7 @@ Please output a JSON format list:
 
 Note: Character names in each segment's characters array must exactly match those in the [Available Character List]."""
 
-    PLOT_SYNTHESIS_PROMPT = """You are a professional Visual Novel writer. Your task is to integrate the following plot segments performed by AI actors (in JSON format logs) into a literary, immersive Visual Novel script.
+    PLOT_SYNTHESIS_PROMPT = """You are a professional Visual Novel writer. Your task is to integrate the following plot segments performed by AI actors (in JSON format logs) into a literary, immersive Visual Novel script. **The final script must be entirely in English** (narration, speech, and choice text).
 
 [Plot Segment Performance Logs (JSON)]
 {plot_performances}
@@ -388,11 +397,11 @@ Note: Character names in each segment's characters array must exactly match thos
 2. **Format rules**:
    - **Scene tags**: **whenever a new story node begins or the scene changes, a scene tag must appear at the very beginning of the script.**
      **Scene names must strictly use names from the [Available Scene List]; do not create new ones.**
-     Format: `<scene>Scene Name</scene>`
+     Format: `<scene>Scene Name</scene>` (names in English, matching the design)
      Example: `<scene>Deep Sea Station Main Control Room</scene>`
      **Scene tags must be on their own line, with a blank line before the story content starts.**
    - **Narration**: used for environmental, action, and psychological descriptions.
-     Format: `<content id="narration">Content...</content>`
+     Format: `<content id="narration">English narration...</content>` (use `narration`, not Chinese labels)
    - **Dialogue**:
      <image id="character_name">expression</image>
      <content id="character_name">Dialogue content</content>
@@ -401,23 +410,23 @@ Note: Character names in each segment's characters array must exactly match thos
 
 3. **Branch options and endings**:
    - If [Subsequent Branch Options] are provided, generate options at the very end of the script.
-   - **Option text must be concise and immersive**: summarize the option content into a phrase of 10 characters or fewer (e.g., "Go to the beach", "Stay in class").
+   - **Option text must be concise and immersive in English** (a short phrase, e.g. "Head to the beach", "Stay in the classroom", roughly 3–8 words).
    - **No immersion-breaking markers**: do not add [] or other tag hints before options (such as [Go with the flow], [Activate hypermemory], etc.); write the option content directly.
    - **Ending description**: if it is a leaf node (ending), use narration to naturally describe the ending; do not use immersion-breaking markers like **[BAD END]** or **[GOOD END]**.
    - Format must be: `<choice target="node_id">Option text</choice>`
 
 [Example Output Style]
-<scene>High School Classroom</scene>
+<scene>High school classroom</scene>
 
-<content id="narration">Afternoon sunlight streams through the gaps in the curtains onto the desks. The air smells faintly of chalk dust.</content>
+<content id="narration">Afternoon sunlight slants through the curtains. The room smells faintly of chalk and old worksheets.</content>
 
-<image id="Xia Yu">bored</image>
+<image id="Elena">bored</image>
 <content id="I">...So boring.</content>
 
-<content id="narration">I slump over my desk, absentmindedly spinning a ballpoint pen. Just then, the classroom door is shoved open.</content>
+<content id="narration">I slump on my desk, spinning a pen. The door bangs open.</content>
 
 <image id="Ren">excited</image>
-<content id="Ren">Everyone! Come look at this!</content>
+<content id="Ren">Everyone! You need to see this!</content>
 
 Output the final script directly, without any explanatory text."""
 
@@ -459,7 +468,7 @@ Requirements:
 1. Summarize the main events and key dialogue.
 2. Include any important foreshadowing or state changes.
 3. Keep the length within 200 words.
-4. Output the summary content directly."""
+4. Write the summary in **English** and output the summary text directly (no labels)."""
 
 
 # ==================== Actor Agent Configuration ====================
@@ -476,7 +485,9 @@ Personality: {personality}
 Background: {background}
 
 Immerse yourself in the character, think and act in the first person, but avoid being stereotypical or exaggerating personality traits — just ensure the character does not go OOC.
-Forget that you are an AI model; you are this character."""
+Forget that you are an AI model; you are this character.
+
+**Language:** All dialogue, actions, and spoken lines you output must be in **English**."""
 
     PERFORM_PROMPT = """Based on the following plot segment outline and the current dialogue log, continue performing your lines and actions in the scene.
 
@@ -505,7 +516,8 @@ Notes:
    - Prefer reusing expressions from the [Available Sprites List].
    - If your emotion has not changed significantly from existing sprites, reuse the existing one.
    - **If none of the existing sprites can represent your current emotion, you need a new sprite — create a new expression name to better express yourself.**
-   - **Expression names must be complete English words (e.g., 'angry', 'surprised'); single-letter abbreviations (e.g., 't', 'a') or Chinese are strictly forbidden.**"""
+   - **Expression names must be complete English words (e.g., 'angry', 'surprised'); single-letter abbreviations (e.g., 't', 'a') or non-English words are strictly forbidden.**
+5. All spoken and narrated text in your turn must be in **English**."""
 
     IMAGE_CRITIQUE_PROMPT = """You are now reviewing the character sprite generated for you. Please evaluate the image from a first-person, in-character perspective.
 

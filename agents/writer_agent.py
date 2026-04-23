@@ -44,7 +44,6 @@ class WriterAgent:
         """Split the node summary into plot segments"""
         logger.info(f"Splitting plot segments (target segments: {segment_count})...")
         
-        # 根据 segment_count 生成不同的指令
         if segment_count == 1:
             split_instruction = "Keep as a single complete scene. Do not split."
         else:
@@ -67,7 +66,10 @@ class WriterAgent:
         )
         try:
             # Use a dedicated system prompt to ensure JSON format
-            system_prompt = "You are a plot structure assistant. Split the plot summary into structured segments and output strictly in JSON."
+            system_prompt = (
+                "You are a plot structure assistant. Split the plot summary into structured segments "
+                "and output strictly in JSON. All text fields in the JSON must be in English."
+            )
             
             response = self.llm_client.chat_completion(
                 messages=[
@@ -92,7 +94,6 @@ class WriterAgent:
         """Synthesize actor performances into a script"""
         logger.info("Synthesizing script (from structured data)...")
         
-        # 将结构化数据转换为 JSON 字符串供 LLM 阅读
         performances_json = json.dumps(plot_performances, ensure_ascii=False, indent=2)
         choices_json = json.dumps(choices, ensure_ascii=False, indent=2)
         scenes_str = ", ".join(available_scenes) if available_scenes else "unspecified"
@@ -301,8 +302,12 @@ class WriterAgent:
                 })
                 continue
             
-            # Parse choice option (Option1: "text" → [effects])
-            choice_match = re.match(r'选项(\d+):\s*"(.+?)"\s*→\s*\[(.+?)\]', line)
+            # Option N: "text" -> [effects] (optional legacy Chinese option prefix)
+            choice_match = re.match(
+                r'(?:\u9009\u9879|Option)\s*(\d+):\s*"(.+?)"\s*(?:\u2192|->)\s*\[(.+?)\]',
+                line,
+                re.IGNORECASE,
+            )
             if choice_match:
                 choice_num = int(choice_match.group(1))
                 choice_text = choice_match.group(2).strip()

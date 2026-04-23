@@ -1,7 +1,7 @@
 """
 Designer Agent
 ~~~~~~~~~~~~~~
-策划 Agent - 负责草拟游戏整体设计文档
+Drafts the overall game design document.
 """
 
 import logging
@@ -16,17 +16,15 @@ logger = logging.getLogger(__name__)
 
 
 class DesignerAgent:
-    """策划 Agent - 游戏设计文档草拟者"""
-    
+    """Designer Agent — drafts the game design JSON."""
+
     def __init__(self, api_key: Optional[str] = None, base_url: Optional[str] = None):
-        """
-        初始化策划 Agent
-        """
+        """Initialize the designer agent."""
         self.llm_client = LLMClient(api_key=api_key, base_url=base_url)
         self.config = DesignerConfig
-        
-        logger.info("✅ 策划 Agent 初始化成功")
-    
+
+        logger.info("Designer Agent initialized successfully")
+
     def generate_game_design(
         self,
         character_count: int = None,
@@ -35,31 +33,35 @@ class DesignerAgent:
         previous_game_design: Dict[str, Any] = None
     ) -> Dict[str, Any]:
         """
-        生成或修改游戏设计
-        
+        Generate or revise the game design.
+
         Args:
-            character_count: 角色数量
-            requirements: 用户需求
-            feedback: 制作人反馈 (可选，用于优化模式)
-            previous_game_design: 之前生成的游戏设计 (可选，用于优化模式)
+            character_count: Number of characters (including protagonist).
+            requirements: User requirements text.
+            feedback: Producer feedback (optional, revision mode).
+            previous_game_design: Prior design (optional, revision mode).
         """
         character_count = character_count or self.config.DEFAULT_CHARACTER_COUNT
-        
-        logger.info("📝 策划正在生成游戏设计...")
-        
+
+        logger.info("Generating game design...")
+
         try:
-            # 构建基础 prompt
             user_prompt = self.config.GAME_DESIGN_PROMPT.format(
                 character_count=character_count,
                 total_nodes=self.config.TOTAL_NODES,
-                requirements=requirements if requirements else "无"
+                requirements=requirements if requirements else "(none — create freely in English per system rules)"
             )
-            
-            # 如果有反馈和之前的设计，直接追加
+
             if feedback and previous_game_design:
-                logger.info("🔧 优化模式：根据反馈修改...")
-                user_prompt += f"\n\n【原游戏设计】\n{json.dumps(previous_game_design, ensure_ascii=False, indent=2)}\n\n【制作人反馈】\n{feedback}\n\n请修改游戏设计文档，解决制作人提出的问题。保持 JSON 格式不变，只修改内容。"
-            
+                logger.info("Revision mode: applying producer feedback...")
+                user_prompt += (
+                    "\n\n[Previous game design]\n"
+                    f"{json.dumps(previous_game_design, ensure_ascii=False, indent=2)}\n\n"
+                    f"[Producer feedback]\n{feedback}\n\n"
+                    "Update the design to address the feedback. Keep the same JSON structure; "
+                    "only change content. All in-game text must remain in English."
+                )
+
             content = self.llm_client.chat_completion(
                 messages=[
                     {"role": "system", "content": self.config.SYSTEM_PROMPT},
@@ -68,30 +70,28 @@ class DesignerAgent:
                 temperature=self.config.TEMPERATURE,
                 json_mode=True
             )
-            
+
             game_design = JSONParser.parse_ai_response(content)
-            
-            # 验证必要字段
+
             required_fields = ["title", "background", "story_graph", "characters", "scenes"]
             if not JSONParser.validate_required_fields(game_design, required_fields):
-                raise ValueError("生成的设计文档缺少必需字段")
+                raise ValueError("Generated design is missing required fields")
 
-            # 节点数量检查：如果 LLM 生成超出限制，记录警告
             sg = game_design.get("story_graph", {})
             raw_nodes = sg.get("nodes", {})
             actual_count = len(raw_nodes) if isinstance(raw_nodes, dict) else len(raw_nodes)
             target = self.config.TOTAL_NODES
             if actual_count > target + 1:
                 logger.warning(
-                    f"⚠️  LLM 生成了 {actual_count} 个节点，超出目标 {target}±1。"
-                    f" 建议在 .env 中调整 GAME_TOTAL_NODES 或重新生成。"
+                    f"LLM produced {actual_count} nodes, above target {target}±1. "
+                    f"Consider adjusting GAME_TOTAL_NODES in .env or regenerating."
                 )
             else:
-                logger.info(f"✅ 节点数量符合要求: {actual_count}/{target}")
+                logger.info(f"Node count within range: {actual_count}/{target}")
 
-            logger.info(f"✅ 游戏设计完成: 《{game_design['title']}》")
+            logger.info(f"Game design complete: {game_design['title']!r}")
             return game_design
-            
+
         except Exception as e:
-            logger.error(f"❌ 游戏设计生成失败: {e}")
+            logger.error(f"Game design generation failed: {e}")
             raise

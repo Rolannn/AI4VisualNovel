@@ -216,7 +216,7 @@ class GameValidator:
         # 2-A: character ID consistency
         story_char_ids = {m.group(1).strip().upper()
                           for m in _RE_CONTENT.finditer(self._story)
-                          if m.group(1).strip().upper() not in ("NARRATOR", "旁白")}
+                          if m.group(1).strip().upper() not in ("NARRATOR", "NARRATION", "\u65c1\u767d")}
         unknown_chars = story_char_ids - design_char_ids
         if unknown_chars:
             for cid in sorted(unknown_chars)[:5]:

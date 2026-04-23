@@ -193,7 +193,7 @@ def _parse_story_features(story_text: str, characters: List[Dict]) -> Dict:
 
     for m in _RE_CONTENT.finditer(story_text):
         cid_raw = m.group(1).strip().upper()
-        if cid_raw in ("NARRATOR", "旁白"):
+        if cid_raw in ("NARRATOR", "NARRATION", "\u65c1\u767d"):
             continue
         name = id_to_name.get(cid_raw, m.group(1).strip())
         text = m.group(2).strip()
