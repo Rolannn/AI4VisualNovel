@@ -75,7 +75,20 @@ class DesignerAgent:
             required_fields = ["title", "background", "story_graph", "characters", "scenes"]
             if not JSONParser.validate_required_fields(game_design, required_fields):
                 raise ValueError("生成的设计文档缺少必需字段")
-            
+
+            # 节点数量检查：如果 LLM 生成超出限制，记录警告
+            sg = game_design.get("story_graph", {})
+            raw_nodes = sg.get("nodes", {})
+            actual_count = len(raw_nodes) if isinstance(raw_nodes, dict) else len(raw_nodes)
+            target = self.config.TOTAL_NODES
+            if actual_count > target + 1:
+                logger.warning(
+                    f"⚠️  LLM 生成了 {actual_count} 个节点，超出目标 {target}±1。"
+                    f" 建议在 .env 中调整 GAME_TOTAL_NODES 或重新生成。"
+                )
+            else:
+                logger.info(f"✅ 节点数量符合要求: {actual_count}/{target}")
+
             logger.info(f"✅ 游戏设计完成: 《{game_design['title']}》")
             return game_design
             

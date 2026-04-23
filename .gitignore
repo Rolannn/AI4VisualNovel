@@ -6,3 +6,6 @@ logs/
 .env
 my_req.txt
 
+# Evaluation figures (regenerated locally)
+eval/*.png
+

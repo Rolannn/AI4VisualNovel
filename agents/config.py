@@ -56,6 +56,7 @@ class DesignerConfig:
     TOTAL_NODES = int(os.getenv("GAME_TOTAL_NODES", "12"))
     DEFAULT_CHARACTER_COUNT = int(os.getenv("GAME_CHARACTER_COUNT", "3"))
     PLOT_SEGMENTS_PER_NODE = int(os.getenv("PLOT_SEGMENTS_PER_NODE", "3"))
+    MAX_TURNS_PER_SEGMENT  = int(os.getenv("MAX_TURNS_PER_SEGMENT",  "20"))
 
     SYSTEM_PROMPT = """You are a senior Visual Novel designer, skilled at crafting engaging stories.
 Your task is to design a complete Visual Novel game document using a **Directed Acyclic Graph (DAG) structure**, allowing different branches to diverge and converge, ensuring all characters have compelling roles across the complex story network.
@@ -184,7 +185,7 @@ Story structure: Directed Acyclic Graph (DAG), supports multiple branches and pa
    - **merge**: convergence point (multiple paths merge here)
    - Note: the starting node is root; ending nodes are those with no outgoing edges
 7. **Recommended structure**:
-   - Total nodes should be {total_nodes} (variance of +-2 acceptable, but must not deviate too much)
+   - **STRICT REQUIREMENT: Total nodes must be EXACTLY {total_nodes} (±1 maximum). Do NOT exceed this limit under any circumstances.**
    - Provide multiple endings to increase replayability
 8. **Path design and narrative coherence (critical!)**:
    - **Merge points must be logically connected**: clues, events, or character decisions from each branch should converge naturally at the merge point, such as: (1) two clues pointing to the same target; (2) different characters gathering at a key moment; (3) multiple events triggering the same consequence; (4) players forced to reunite at a location, etc.
@@ -571,8 +572,13 @@ class PathConfig:
     
     # Log directories
     LOG_DIR = os.path.join(PROJECT_ROOT, "logs")
-    TEXT_LOG_DIR = os.path.join(LOG_DIR, "text_log")   # Stores performance_node.jsonl
-    IMAGE_LOG_DIR = os.path.join(LOG_DIR, "image_log") # Stores rejected images
+    TEXT_LOG_DIR  = os.path.join(LOG_DIR, "text_log")    # Stores performance_node.jsonl
+    IMAGE_LOG_DIR = os.path.join(LOG_DIR, "image_log")   # Stores rejected images
+    QUALITY_LOG_DIR = os.path.join(LOG_DIR, "quality")   # Stores quality scoring logs
+
+    # Quality log files
+    QUALITY_ROUNDS_LOG = os.path.join(QUALITY_LOG_DIR, "rounds.jsonl")   # Per-round scores
+    QUALITY_FINAL_LOG  = os.path.join(QUALITY_LOG_DIR, "final.jsonl")    # Per-run final scores
     
     @classmethod
     def ensure_directories(cls):
@@ -584,7 +590,8 @@ class PathConfig:
             cls.BACKGROUNDS_DIR,
             cls.LOG_DIR,
             cls.TEXT_LOG_DIR,
-            cls.IMAGE_LOG_DIR
+            cls.IMAGE_LOG_DIR,
+            cls.QUALITY_LOG_DIR,
         ]
         for d in dirs:
             os.makedirs(d, exist_ok=True)

@@ -66,7 +66,7 @@ class LLMClient:
         messages: List[Dict[str, str]], 
         temperature: float = 0.7, 
         json_mode: bool = False,
-        max_retries: int = 3
+        max_retries: int = 5
     ) -> str:
         """
         统一的聊天补全接口（带重试机制）
@@ -91,8 +91,11 @@ class LLMClient:
                 else:
                     raise ValueError(f"不支持的 LLM 提供商: {self.provider}")
             except Exception as e:
+                err_str = str(e)
+                is_rate_limit = any(code in err_str for code in ("503", "429", "UNAVAILABLE", "RESOURCE_EXHAUSTED"))
                 if attempt < max_retries - 1:
-                    wait_time = 2 ** attempt  # 指数退避: 1s, 2s, 4s
+                    # 503/429 等服务端限流用更长的退避；其他错误用短退避
+                    wait_time = (10 * (2 ** attempt)) if is_rate_limit else (2 ** attempt)
                     logger.warning(f"⚠️ LLM 调用失败 (尝试 {attempt + 1}/{max_retries}): {e}")
                     logger.info(f"   ⏳ 等待 {wait_time} 秒后重试...")
                     time.sleep(wait_time)
@@ -146,7 +149,8 @@ class LLMClient:
                 model=APIConfig.MODEL,
                 messages=processed_messages,
                 temperature=temperature,
-                response_format=response_format
+                response_format=response_format,
+                timeout=90
             )
             return response.choices[0].message.content
         except Exception as e:
@@ -205,14 +209,28 @@ class LLMClient:
         if json_mode:
             config.response_mime_type = "application/json"
             
-        try:
-            response = self.client.models.generate_content(
+        import concurrent.futures
+        API_TIMEOUT = 240  # 单次 API 调用最长等待秒数
+
+        def _call():
+            return self.client.models.generate_content(
                 model=APIConfig.MODEL,
                 contents=contents,
                 config=config
             )
+
+        try:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(_call)
+                try:
+                    response = future.result(timeout=API_TIMEOUT)
+                except concurrent.futures.TimeoutError:
+                    future.cancel()
+                    raise TimeoutError(
+                        f"Google Gemini API 超过 {API_TIMEOUT}s 无响应，视为超时"
+                    )
             return response.text
-            
+
         except Exception as e:
             logger.error(f"Google Gemini API 调用失败: {e}")
             raise

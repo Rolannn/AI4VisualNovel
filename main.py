@@ -69,6 +69,28 @@ def create_game_flow(args):
         if args.fan_docs:
             print(f"   Local docs: {args.fan_docs}")
 
+    use_quality_scorer = not args.no_quality_check
+    if not use_quality_scorer:
+        print("\n[Baseline mode] Quality scorer intervention DISABLED"
+              " — final scores still logged for comparison.")
+
+    if args.force_regen or args.regen_story_only:
+        import shutil
+        from agents.config import PathConfig as _PC
+        # story-only: only clear story.txt; force-regen: also clear game_design
+        targets = [_PC.STORY_FILE]
+        if args.force_regen:
+            targets.append(_PC.GAME_DESIGN_FILE)
+        for p in targets:
+            if os.path.exists(p):
+                os.remove(p)
+                print(f"  [regen] Deleted: {p}")
+        if args.force_regen:
+            perf_dir = os.path.join(os.path.dirname(_PC.DATA_DIR), "logs", "performance")
+            if os.path.isdir(perf_dir):
+                shutil.rmtree(perf_dir)
+                print(f"  [regen] Cleared: {perf_dir}")
+
     # Create the game
     game_design = workflow.create_new_game(
         character_count=args.character_count,
@@ -78,6 +100,7 @@ def create_game_flow(args):
         fan_docs_dir=args.fan_docs or "",
         rag_force_rebuild=args.rag_rebuild,
         rag_language=args.rag_language or "",
+        use_quality_scorer=use_quality_scorer,
     )
 
     print("\n" + "="*70)
@@ -162,6 +185,10 @@ Examples:
   # Check game generation status
   python main.py --mode status
 
+  # A/B comparison: run twice and compare logs in eval/quality_logs/
+  python main.py --mode create --no-quality-check   # baseline (control)
+  python main.py --mode create                      # with quality scorer (treatment)
+
 Environment variables:
   OPENAI_API_KEY          OpenAI API key (for GPT and image generation)
   OPENAI_BASE_URL         OpenAI API base URL (optional)
@@ -213,6 +240,24 @@ Environment variables:
     )
     # -----------------------------------------
 
+    parser.add_argument(
+        '--no-quality-check',
+        action='store_true',
+        help='Disable quality scorer intervention (baseline / control run for A/B comparison).'
+             ' Final scores are still computed for fair comparison.'
+    )
+    parser.add_argument(
+        '--force-regen',
+        action='store_true',
+        help='Delete existing story.txt and game_design.json before generating, '
+             'forcing a completely fresh run (needed for A/B comparison).'
+    )
+    parser.add_argument(
+        '--regen-story-only',
+        action='store_true',
+        help='Delete only story.txt (keep game_design.json). '
+             'Use this to A/B test scorer on the SAME game design.'
+    )
     parser.add_argument('--debug', action='store_true', help='Enable debug logging')
 
     args = parser.parse_args()

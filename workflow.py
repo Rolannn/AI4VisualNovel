@@ -23,6 +23,13 @@ from agents.config import PathConfig, APIConfig, WriterConfig, DesignerConfig, R
 from agents.story_graph import StoryGraph
 from game_engine.data import StoryParser
 
+# Quality scoring (graceful import — eval/ is optional)
+try:
+    from eval.quality_scorer import QualityScorer
+    _QUALITY_SCORER_AVAILABLE = True
+except ImportError:
+    _QUALITY_SCORER_AVAILABLE = False
+
 # Constants
 logger = logging.getLogger(__name__)
 
@@ -52,6 +59,9 @@ class WorkflowController:
         self.base_url = None
         
         self.game_design = None
+
+        # Unique ID for this generation run (used in quality logs)
+        self._run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
         
         logger.info(" Workflow controller initialized")
     
@@ -123,6 +133,7 @@ class WorkflowController:
         fan_docs_dir: str = "",
         rag_force_rebuild: bool = False,
         rag_language: str = "",
+        use_quality_scorer: bool = True,
     ) -> Dict[str, Any]:
         """
         Create a new game (full flow: [RAG] -> design -> cast -> generate -> finalize).
@@ -131,6 +142,7 @@ class WorkflowController:
             character_count:    Number of characters (including protagonist)
             requirements:       User requirements text (from requirements_file)
             franchise:          Fan-fiction mode - franchise/IP name (e.g. "Genshin Impact")
+            use_quality_scorer: If False, skip all quality scoring (baseline / A/B control run)
             fan_characters:     Fan-fiction mode - list of required canon characters
             fan_docs_dir:       Fan-fiction mode - local supplemental docs directory (optional)
             rag_force_rebuild:  Fan-fiction mode - force rebuild knowledge base
@@ -155,7 +167,8 @@ class WorkflowController:
                 language = rag_language or RAGConfig.WIKIPEDIA_LANGUAGE
                 force_rebuild = rag_force_rebuild or RAGConfig.FORCE_REBUILD
 
-                rag_agent = RAGAgent(franchise=franchise, language=language)
+                self.rag_agent = RAGAgent(franchise=franchise, language=language)
+                rag_agent = self.rag_agent
                 total_docs = rag_agent.build_knowledge_base(
                     franchise=franchise,
                     characters=fan_characters or [],
@@ -249,13 +262,52 @@ class WorkflowController:
                 
                 while current_iteration < max_iterations:
                     logger.info(f"    Producer reviewing design draft (round {current_iteration + 1})...")
+
+                    # ── Quality scoring: compute structural scores and inject into requirements ──
+                    quality_addendum = ""
+                    q_result = None
+                    if use_quality_scorer and _QUALITY_SCORER_AVAILABLE and self.game_design:
+                        try:
+                            # story_text: use existing story.txt if available (later rounds), else None
+                            story_text_path = Path(PathConfig.STORY_FILE)
+                            story_text_for_design = (
+                                story_text_path.read_text(encoding="utf-8")
+                                if story_text_path.exists() else None
+                            )
+                            scorer = QualityScorer(self.game_design, story_text=story_text_for_design)
+                            q_result = scorer.score_all(include_ooc=False)
+                            quality_addendum = scorer.format_producer_feedback(q_result)
+                            if quality_addendum:
+                                logger.info(
+                                    f"    Quality scorer: overall={q_result['overall_structural_score']:.2f} "
+                                    f"— issues detected, appending to Producer requirements"
+                                )
+                            else:
+                                logger.info(
+                                    f"    Quality scorer: overall={q_result['overall_structural_score']:.2f} ✓"
+                                )
+                        except Exception as e:
+                            logger.warning(f"    Quality scorer failed (non-fatal): {e}")
+
+                    effective_requirements = requirements + quality_addendum
+
                     feedback = self.producer.critique_game_design(
                         self.game_design, 
-                        requirements,
+                        effective_requirements,
                         expected_nodes=self.designer.config.TOTAL_NODES,
                         expected_characters=character_count
                     )
-                    
+
+                    # ── Log this round's scores + verdict ────────────────────
+                    self._log_producer_round(
+                        round_num=current_iteration + 1,
+                        q_result=q_result,
+                        quality_issues=[line.strip("- ") for line in quality_addendum.splitlines()
+                                        if line.startswith("-")] if quality_addendum else [],
+                        verdict="PASS" if feedback == "PASS" else "REVISE",
+                        scorer_enabled=use_quality_scorer and _QUALITY_SCORER_AVAILABLE,
+                    )
+
                     if feedback == "PASS":
                         logger.info("    Approved by Producer")
                         break
@@ -287,7 +339,7 @@ class WorkflowController:
             
             # Step 3: generate full story
             logger.info(f"\n[Step 3/6] Generating full story (DAG-based)...")
-            self._generate_full_story()
+            self._generate_full_story(use_quality_scorer=use_quality_scorer)
             
             # Step 4: scan script and update expression library
             logger.info("\n[Step 4/6] Scanning script and syncing expression library...")
@@ -336,6 +388,40 @@ class WorkflowController:
                 character_images=character_ref_images
             )
             
+            # Step 7 (post-gen QA): run game validator and quality scorer
+            logger.info("\n[Post-gen QA] Running validation and quality scoring...")
+            try:
+                from eval.game_validator import GameValidator
+                validator = GameValidator()
+                report = validator.validate()
+                report.print_console()
+            except Exception as e:
+                logger.warning(f" Game validator failed (non-fatal): {e}")
+
+            final_q_result = None
+            try:
+                story_text_for_score = None
+                if Path(PathConfig.STORY_FILE).exists():
+                    story_text_for_score = Path(PathConfig.STORY_FILE).read_text(encoding="utf-8")
+                if use_quality_scorer and _QUALITY_SCORER_AVAILABLE:
+                    scorer = QualityScorer(self.game_design, story_text=story_text_for_score)
+                    final_q_result = scorer.score_all(include_ooc=False)
+                    scorer.print_report(final_q_result)
+                elif _QUALITY_SCORER_AVAILABLE:
+                    # Baseline run: still compute final scores for fair comparison, just don't intervene
+                    scorer = QualityScorer(self.game_design, story_text=story_text_for_score)
+                    final_q_result = scorer.score_all(include_ooc=False)
+                    scorer.print_report(final_q_result)
+            except Exception as e:
+                logger.warning(f" Quality scorer failed (non-fatal): {e}")
+
+            # ── Log final quality scores ──────────────────────────────────────
+            self._log_final_quality(final_q_result,
+                                    scorer_enabled=use_quality_scorer and _QUALITY_SCORER_AVAILABLE)
+
+            # ── Auto-run EDA notebook ─────────────────────────────────────────
+            self._run_eda_notebook()
+
             logger.info("\n" + "="*60)
             logger.info(" Game production complete")
             return self.game_design
@@ -635,7 +721,7 @@ class WorkflowController:
         except Exception as e:
             logger.error(f"    Failed to scan script: {e}")
 
-    def _generate_full_story(self):
+    def _generate_full_story(self, use_quality_scorer: bool = True):
         """Generate full story (supports tree and DAG structures)."""
         try:
             # Create story graph object (auto-compatible with tree and DAG)
@@ -702,9 +788,18 @@ class WorkflowController:
                                 "\n".join(parent_summaries)
                             )
                         else:
-                            # Normal node: use full parent node content
-                            parent_contents = [node_contents.get(p, "") for p in parents if p in node_contents]
-                            short_term_memory = "\n\n".join(parent_contents)
+                            # Normal node: summary + last 20 lines for continuity
+                            parent = parents[0]
+                            parent_summary = node_summaries.get(parent, "")
+                            parent_raw = node_contents.get(parent, "")
+                            recent_lines = "\n".join(parent_raw.splitlines()[-20:]) if parent_raw else ""
+                            if parent_summary and recent_lines:
+                                short_term_memory = (
+                                    f"[Story so far]: {parent_summary}\n\n"
+                                    f"[Last few exchanges]:\n{recent_lines}"
+                                )
+                            elif parent_raw:
+                                short_term_memory = "\n".join(parent_raw.splitlines()[-30:])
                     
                     full_context = f"{long_term_memory}\n\n[Recent story]:\n{short_term_memory}"
                     
@@ -755,12 +850,25 @@ class WorkflowController:
                             # Dialogue accumulation buffer for this segment
                             plot_current_context = ""
                             turn_count = 0
-                            safety_limit = 50  # Fixed safety cap: 50 turns
+                            safety_limit = self.designer.config.MAX_TURNS_PER_SEGMENT
                             speaker_retry_count = 0  # Director retry counter
                             max_speaker_retries = 3
                             
-                            # Build segment context: global history + previous segments
-                            previous_plots_context = "\n\n".join(all_plot_contexts) if all_plot_contexts else ""
+                            # Build segment context: keep only last segment full, summarize earlier ones
+                            if all_plot_contexts:
+                                if len(all_plot_contexts) == 1:
+                                    previous_plots_context = all_plot_contexts[-1]
+                                else:
+                                    # Summarize all but the last segment to save tokens
+                                    earlier_summary = self.writer.summarize_story(
+                                        "\n\n".join(all_plot_contexts[:-1])
+                                    )
+                                    previous_plots_context = (
+                                        f"[Earlier segments summary]: {earlier_summary}\n\n"
+                                        f"[Previous segment]:\n{all_plot_contexts[-1]}"
+                                    )
+                            else:
+                                previous_plots_context = ""
                             plot_full_context = full_context
                             if previous_plots_context:
                                 plot_full_context += f"\n\n[Previous segments]:\n{previous_plots_context}"
@@ -862,6 +970,41 @@ class WorkflowController:
                         node_contents[node_id] = polished_script
                         node_summary = self.writer.summarize_story(polished_script)
                         node_summaries[node_id] = node_summary
+
+                        # ── Writer-level quality guidance: scene diversity & character balance ──
+                        if use_quality_scorer and _QUALITY_SCORER_AVAILABLE:
+                            try:
+                                # Accumulate the full story written so far for rolling evaluation
+                                story_so_far_path = Path(PathConfig.STORY_FILE)
+                                story_so_far = (story_so_far_path.read_text(encoding="utf-8")
+                                                if story_so_far_path.exists() else polished_script)
+                                rolling_scorer = QualityScorer(self.game_design, story_text=story_so_far)
+                                rolling_result = rolling_scorer.score_all(include_ooc=False)
+                                writer_guidance = rolling_scorer.format_writer_guidance(rolling_result)
+                                if writer_guidance:
+                                    logger.info(f"  [Scorer→Writer] Balance advisory injected for next nodes")
+                                    # Append to node summary so subsequent nodes inherit the guidance
+                                    node_summaries[node_id] = node_summaries.get(node_id, "") + writer_guidance
+                            except Exception as e:
+                                logger.debug(f"  Writer guidance failed for node {node_id} (non-fatal): {e}")
+
+                        # ── OOC detection: append warning to node summary for next nodes ──
+                        if (use_quality_scorer and _QUALITY_SCORER_AVAILABLE
+                                and hasattr(self, 'rag_agent') and self.rag_agent is not None):
+                            try:
+                                ooc_scorer = QualityScorer(
+                                    self.game_design,
+                                    story_text=polished_script,
+                                    rag_agent=self.rag_agent,
+                                    llm_client=list(self.actors.values())[0].llm_client if self.actors else None,
+                                )
+                                ooc_result = ooc_scorer.score_all(include_ooc=True)
+                                ooc_warning = QualityScorer.format_ooc_warning(ooc_result.get("ooc_results", {}))
+                                if ooc_warning:
+                                    logger.warning(f"  OOC detected in node {node_id} — appending to summary")
+                                    node_summaries[node_id] += ooc_warning
+                            except Exception as e:
+                                logger.debug(f"  OOC detection failed for node {node_id} (non-fatal): {e}")
                     
                     logger.info(f" Node {node_id} script generation complete")
             
@@ -1152,3 +1295,112 @@ class WorkflowController:
     def _character_mentioned_in(self, char_name: str, text: str) -> bool:
         """Check whether a character is mentioned in text."""
         return char_name in text or char_name.lower() in text.lower()
+
+    # ── Quality logging helpers ────────────────────────────────────────────────
+
+    def _log_producer_round(
+        self,
+        round_num: int,
+        q_result: Optional[Dict],
+        quality_issues: List[str],
+        verdict: str,
+        scorer_enabled: bool,
+    ):
+        """Append one Producer-round quality record to logs/quality/rounds.jsonl."""
+        try:
+            record = {
+                "run_id":         self._run_id,
+                "game_title":     (self.game_design or {}).get("title", ""),
+                "timestamp":      datetime.now().isoformat(),
+                "round":          round_num,
+                "scorer_enabled": scorer_enabled,
+                "producer_verdict": verdict,
+                "quality_issues": quality_issues,
+            }
+            if q_result:
+                for key in ("branch_balance_score", "character_balance_score",
+                            "scene_diversity_score", "overall_structural_score"):
+                    val = q_result.get(key)
+                    record[key] = val["score"] if isinstance(val, dict) else val
+                sf = q_result.get("structural_features", {})
+                record.update({
+                    "branching_factor": sf.get("branching_factor"),
+                    "path_entropy":     sf.get("path_entropy"),
+                    "node_count":       sf.get("node_count"),
+                })
+            with open(PathConfig.QUALITY_ROUNDS_LOG, "a", encoding="utf-8") as f:
+                f.write(json.dumps(record, ensure_ascii=False) + "\n")
+        except Exception as e:
+            logger.debug(f"Quality round log failed (non-fatal): {e}")
+
+    def _log_final_quality(self, q_result: Optional[Dict], scorer_enabled: bool):
+        """Append final quality record to logs/quality/final.jsonl."""
+        try:
+            record = {
+                "run_id":         self._run_id,
+                "game_title":     (self.game_design or {}).get("title", ""),
+                "timestamp":      datetime.now().isoformat(),
+                "scorer_enabled": scorer_enabled,
+            }
+            if q_result:
+                for key in ("branch_balance_score", "character_balance_score",
+                            "scene_diversity_score", "overall_structural_score"):
+                    val = q_result.get(key)
+                    record[key] = val["score"] if isinstance(val, dict) else val
+                sf = q_result.get("structural_features", {})
+                record.update({k: sf.get(k) for k in
+                               ("node_count", "edge_count", "branching_factor",
+                                "path_entropy", "merge_ratio", "ending_count")})
+                ooc = q_result.get("ooc_results", {})
+                if ooc:
+                    record["ooc_scores"] = {n: d["score"] for n, d in ooc.items()}
+                    record["ooc_avg"] = round(
+                        sum(d["score"] for d in ooc.values()) / len(ooc), 3
+                    )
+                tf = q_result.get("text_features") or {}
+                record["lines_per_character"]  = tf.get("lines_per_character", {})
+                record["expression_diversity"] = tf.get("expression_diversity", {})
+            with open(PathConfig.QUALITY_FINAL_LOG, "a", encoding="utf-8") as f:
+                f.write(json.dumps(record, ensure_ascii=False) + "\n")
+            logger.info(f" Quality log saved → {PathConfig.QUALITY_FINAL_LOG}")
+        except Exception as e:
+            logger.debug(f"Quality final log failed (non-fatal): {e}")
+
+    def _run_eda_notebook(self):
+        """Execute eval/eda.ipynb and save the result as eval/eda_report.html."""
+        import subprocess
+        eval_nb = Path(PathConfig.PROJECT_ROOT) / "eval" / "eda.ipynb"
+        out_html = Path(PathConfig.PROJECT_ROOT) / "eval" / "eda_report.html"
+        if not eval_nb.exists():
+            logger.warning(" EDA notebook not found, skipping auto-run.")
+            return
+        logger.info(f"\n[Post-gen QA] Executing EDA notebook → {out_html.name} ...")
+        try:
+            result = subprocess.run(
+                [
+                    "jupyter", "nbconvert",
+                    "--to", "html",
+                    "--execute",
+                    "--ExecutePreprocessor.timeout=300",
+                    str(eval_nb),
+                    "--output", str(out_html),
+                ],
+                capture_output=True,
+                text=True,
+                timeout=360,
+            )
+            if result.returncode == 0:
+                logger.info(f" EDA report saved → {out_html}")
+            else:
+                logger.warning(
+                    f" EDA notebook execution failed (exit {result.returncode}). "
+                    f"Run manually: jupyter nbconvert --to html --execute eval/eda.ipynb\n"
+                    f"{result.stderr[-500:]}"
+                )
+        except FileNotFoundError:
+            logger.warning(
+                " 'jupyter' not found. Install with: pip install jupyter\n"
+                " Run manually: jupyter nbconvert --to html --execute eval/eda.ipynb"
+            )
+        except subprocess.TimeoutExpired:
+            logger.warning(" EDA notebook timed out (>360s). Run manually.")
